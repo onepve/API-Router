@@ -87,3 +87,47 @@ export interface TokenRecord {
     cacheReadTokens?: number;
     cacheWriteTokens?: number;
 }
+
+/** 单次客户端请求的最终转发结果（仅包含非敏感元数据） */
+export interface RequestLogInput {
+    timestamp: number;
+    originalModel: string;
+    resolvedModel: string;
+    path: string;
+    status: number;
+    durationMs: number;
+    totalTokens?: number;
+    upstreamBaseUrl?: string;
+    stream: boolean;
+    retryCount: number;
+    error?: string;
+}
+
+export interface RequestLogRecord extends RequestLogInput {
+    id: number;
+}
+
+export interface RequestLogQuery {
+    after?: number;
+    limit?: number;
+    model?: string;
+    status?: number;
+    path?: string;
+}
+
+export interface RequestLogSummary {
+    requestCount: number;
+    errorCount: number;
+    successRate: number;
+    p95LatencyMs: number;
+    timeline: Array<{
+        bucket: string;
+        requestCount: number;
+        errorCount: number;
+    }>;
+    models: Array<{
+        model: string;
+        requestCount: number;
+        totalTokens: number;
+    }>;
+}
