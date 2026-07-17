@@ -1,0 +1,15 @@
+# Local configuration and secrets
+config.yaml
+.env
+.env.*
+
+# Runtime data and caches
+token_stats.json
+model_catalog.json
+*.tmp
+
+# Local agent and design-session state
+.claude/
+.superpowers/
+.agents/
+.codex/
