@@ -520,11 +520,11 @@ export function getAdminScriptResponse(): Response {
             }
 
             function extractModelPattern(displayName) {
-                var m = displayName.match(/^\\[\\d+\\]\\s(.+?)\\s\\((.+?)\\)$/);
+                if (displayName === '* (default)') return '*';
+                var m = displayName.match(/^\[\d+\]\s(.+)\s\((exact|prefix|regex)\)$/);
                 if (m) {
                     var p = m[1];
                     if (m[2] === 'prefix') p += '*';
-                    if (m[2] === 'regex') p = '^' + p;
                     return p;
                 }
                 return displayName;

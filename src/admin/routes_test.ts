@@ -289,3 +289,24 @@ Deno.test("token page initial range matches the active one-hour control", async 
     assertEquals(source.includes("var tokenRange = '1h';"), true);
     assertEquals(source.includes("'1h': { apiPath: '/minutely', value: 60"), true);
 });
+
+Deno.test("admin script extracts exact prefix regex and default model names from status keys", async () => {
+    const router = createBareRouter();
+    const script = await handleAdminRoutes(
+        new Request("http://local/admin/assets/admin.js"),
+        router,
+        "unused.yaml",
+    );
+    const source = await script?.text() || "";
+    const start = source.indexOf("function extractModelPattern");
+    const end = source.indexOf("function renderDashboardStatus", start);
+    const functionSource = source.slice(start, end);
+    const extractModelPattern = new Function(
+        `${functionSource}; return extractModelPattern;`,
+    )() as (value: string) => string;
+
+    assertEquals(extractModelPattern("[3] deepseek-ai/deepseek-v4-flash (exact)"), "deepseek-ai/deepseek-v4-flash");
+    assertEquals(extractModelPattern("[4] model-prefix (prefix)"), "model-prefix*");
+    assertEquals(extractModelPattern("[5] ^gpt-5\\.(?:4|5)$ (regex)"), "^gpt-5\\.(?:4|5)$");
+    assertEquals(extractModelPattern("* (default)"), "*");
+});
