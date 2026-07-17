@@ -2,7 +2,9 @@
 // 模型路由器核心 — 模型匹配、请求转发、重定向链
 
 import type { ModelConfig, Matcher, MatcherType, RouterConfig, HeaderPolicy } from "./types.ts";
+import type { RequestLogRecord } from "./types.ts";
 import { TokenStore } from "./token_store.ts";
+import { RequestLogStore } from "./request_log_store.ts";
 import { EndpointManager } from "./endpoint_manager.ts";
 import { WeightedLoadBalancer } from "./load_balancer.ts";
 import { loadConfig, saveConfig, resolveModelTypes } from "./config.ts";
@@ -12,6 +14,20 @@ import { Logger } from "./logger.ts";
 import type { LogLevel } from "./logger.ts";
 
 class RequestBodyTooLargeError extends Error {}
+
+interface RequestContext {
+    startedAt: number;
+    path: string;
+    originalModel?: string;
+    resolvedModel?: string;
+    upstreamBaseUrl?: string;
+    stream: boolean;
+    attempts: number;
+    totalTokens?: number;
+    deferred: boolean;
+    error?: string;
+    record?: RequestLogRecord;
+}
 
 // ============================================================================
 // 模型路由器核心
@@ -43,6 +59,7 @@ export class ModelRouter {
     private maxRedirectDepth = 5;
     private catalog: ModelCatalog;
     tokenStore: TokenStore;
+    requestLogStore: RequestLogStore;
     authKeys: string[];
     configPath: string;
     globalHeaderPolicy: HeaderPolicy | undefined;
@@ -61,6 +78,7 @@ export class ModelRouter {
             : 32 * 1024 * 1024;
         const persistPath = Deno.env.get("TOKEN_STATS_PATH") || "./token_stats.json";
         this.tokenStore = new TokenStore(persistPath, this.logger.child("TokenStore"));
+        this.requestLogStore = new RequestLogStore(500);
         this.tokenStore.restore().then(() => {
             this.tokenStore.startCleanup();
         });
@@ -309,13 +327,28 @@ export class ModelRouter {
                 headers: { "content-type": "application/json" },
             });
         }
-        return this.processRequest(req, new Set());
+        const context: RequestContext = {
+            startedAt: Date.now(),
+            path: new URL(req.url).pathname,
+            stream: false,
+            attempts: 0,
+            deferred: false,
+        };
+        const response = await this.processRequest(req, new Set(), context);
+        if (!context.deferred) {
+            this.recordRequestOutcome(context, response.status);
+        }
+        return response;
     }
 
     // ------------------------------------------------------------------------
     // 内部递归处理（支持重定向链）
     // ------------------------------------------------------------------------
-    private async processRequest(req: Request, redirectChain: Set<string>): Promise<Response> {
+    private async processRequest(
+        req: Request,
+        redirectChain: Set<string>,
+        context?: RequestContext,
+    ): Promise<Response> {
         const url = new URL(req.url);
         if (!url.pathname.startsWith("/v1/")) {
             return new Response("Not Found", { status: 404 });
@@ -352,6 +385,11 @@ export class ModelRouter {
 
         // 检测是否为流式请求
         const isStream = body.stream === true;
+        if (context) {
+            context.originalModel ??= originalModel;
+            context.resolvedModel = originalModel;
+            context.stream = isStream;
+        }
 
         if (redirectChain.size >= this.maxRedirectDepth) {
             this.logger.error(`Exceeded max redirect depth`);
@@ -385,7 +423,17 @@ export class ModelRouter {
         while (endpoint) {
             const baseUrl = baseUrlMap.get(endpoint);
             if (baseUrl && baseUrl !== "") {
-                const response = await this.forwardRequest(req, bodyBuffer!, baseUrl, endpoint, config, originalModel, isStream);
+                if (context) context.upstreamBaseUrl = baseUrl;
+                const response = await this.forwardRequest(
+                    req,
+                    bodyBuffer!,
+                    baseUrl,
+                    endpoint,
+                    config,
+                    originalModel,
+                    isStream,
+                    context,
+                );
                 if (response !== null) {
                     return response;
                 }
@@ -425,10 +473,11 @@ export class ModelRouter {
                     headers: req.headers,
                     body: newBody,
                 });
-                return this.processRequest(newReq, new Set(redirectChain));
+                return this.processRequest(newReq, new Set(redirectChain), context);
             }
         }
 
+        if (context) context.error = `No available endpoints for model: ${originalModel}`;
         return new Response(JSON.stringify({ error: `No available endpoints for model: ${originalModel}` }), { status: 503, headers: { "content-type": "application/json" } });
     }
 
@@ -442,7 +491,8 @@ export class ModelRouter {
         endpoint: EndpointManager,
         config: ModelConfig,
         modelName: string,
-        isStream: boolean = false
+        isStream: boolean = false,
+        context?: RequestContext,
     ): Promise<Response | null> {
         const url = new URL(req.url);
         const timeout = endpoint.getTimeout() ?? config.default_timeout ?? 120;
@@ -481,6 +531,7 @@ export class ModelRouter {
             this.setAuthHeader(headers, key, baseUrl);
 
             try {
+                if (context) context.attempts++;
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), timeout * 1000);
 
@@ -523,8 +574,19 @@ export class ModelRouter {
 
                 // ---------- 流式 Token 统计（SSE 流截取） ----------
                 if (isStream && response.body) {
+                    if (context) context.deferred = true;
                     const wrapped = this.wrapStreamResponse(
-                        response, modelName, key, endpoint
+                        response,
+                        modelName,
+                        key,
+                        endpoint,
+                        context
+                            ? (result) => {
+                                context.totalTokens = result.totalTokens;
+                                if (result.error) context.error = result.error;
+                                this.recordRequestOutcome(context, result.status);
+                            }
+                            : undefined,
                     );
                     return wrapped;
                 }
@@ -549,6 +611,10 @@ export class ModelRouter {
                                     totalTokens = (usage.prompt_tokens ?? 0) + (usage.completion_tokens ?? 0);
                                 }
                                 if (totalTokens !== undefined) {
+                                    if (context) {
+                                        context.totalTokens = totalTokens;
+                                        if (context.record) context.record.totalTokens = totalTokens;
+                                    }
                                     const breakdown = this.extractTokenBreakdown(usage);
                                     this.tokenStore.record(modelName, totalTokens,
                                         (breakdown.inputTokens !== undefined || breakdown.outputTokens !== undefined)
@@ -584,7 +650,8 @@ export class ModelRouter {
         response: Response,
         modelName: string,
         key: string,
-        endpoint: EndpointManager
+        endpoint: EndpointManager,
+        onComplete?: (result: { status: number; totalTokens?: number; error?: string }) => void,
     ): Response {
         let streamBuffer = "";
         let lastUsage: { totalTokens: number; usageObj: any } | null = null;
@@ -640,13 +707,16 @@ export class ModelRouter {
                     self.logger.info(`Stream token stats: ${modelName} = ${lastUsage.totalTokens} tokens`);
                 }
                 await endpoint.markSuccess(key);
+                onComplete?.({ status: response.status, totalTokens: lastUsage?.totalTokens });
             },
         });
 
         // 启动管道：上游响应 → TransformStream → 下游 Readable
         response.body!.pipeTo(writable).catch(async (e) => {
             await endpoint.markFailure(key);
-            self.logger.error(`Stream pipe error: ${e?.message || e}`);
+            const message = e?.message || String(e);
+            onComplete?.({ status: 502, totalTokens: lastUsage?.totalTokens, error: message });
+            self.logger.error(`Stream pipe error: ${message}`);
         });
 
         return new Response(readable, {
@@ -695,6 +765,23 @@ export class ModelRouter {
 
     private findUsageObject(payload: any): any {
         return payload?.usage ?? payload?.response?.usage;
+    }
+
+    private recordRequestOutcome(context: RequestContext, status: number): void {
+        if (context.record) return;
+        context.record = this.requestLogStore.record({
+            timestamp: context.startedAt,
+            originalModel: context.originalModel || "",
+            resolvedModel: context.resolvedModel || context.originalModel || "",
+            path: context.path,
+            status,
+            durationMs: Math.max(0, Date.now() - context.startedAt),
+            totalTokens: context.totalTokens,
+            upstreamBaseUrl: context.upstreamBaseUrl,
+            stream: context.stream,
+            retryCount: Math.max(0, context.attempts - 1),
+            error: context.error,
+        });
     }
 
     /** 从上游 API usage 对象中提取分项 token */

@@ -3,6 +3,7 @@ import { Logger } from "./logger.ts";
 import { ModelRouter } from "./model_router.ts";
 import { handleAdminRoutes } from "./admin/routes.ts";
 import { loadConfig, saveConfig } from "./config.ts";
+import { RequestLogStore } from "./request_log_store.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
     if (!condition) throw new Error(message);
@@ -28,8 +29,13 @@ function createBareRouter(): ModelRouter {
     router.globalHeaderPolicy = undefined;
     router.logger = new Logger("error");
     router.tokenStore = { record() {} };
+    router.requestLogStore = new RequestLogStore(500);
     router.configPath = "";
     return router as ModelRouter;
+}
+
+async function configureRouter(router: ModelRouter, models: any[]): Promise<void> {
+    await (router as any).reload(models, undefined, { models });
 }
 
 function jsonRequest(url: string, body: unknown, authorization = "Bearer router-secret"): Request {
@@ -339,4 +345,189 @@ Deno.test("endpoint CRUD validates before saving", async () => {
     } finally {
         await Deno.remove(dir, { recursive: true });
     }
+});
+
+Deno.test("request log records one successful final outcome", async () => {
+    const router = createBareRouter() as any;
+    await configureRouter(router, [{
+        name: "demo",
+        endpoints: [{ base_url: "https://upstream.example/v1", keys: ["key-1"] }],
+    }]);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify({
+        usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 },
+    }), { headers: { "content-type": "application/json" } }))) as typeof fetch;
+
+    try {
+        const response = await router.handleRequest(jsonRequest(
+            "http://local/v1/chat/completions",
+            { model: "demo" },
+            "Bearer unused",
+        ));
+        await response.text();
+        await new Promise(resolve => setTimeout(resolve, 0));
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+
+    const records = router.requestLogStore.query({ limit: 10 }).records;
+    assertEquals(records.length, 1);
+    assertEquals(records[0].status, 200);
+    assertEquals(records[0].originalModel, "demo");
+    assertEquals(records[0].resolvedModel, "demo");
+    assertEquals(records[0].totalTokens, 5);
+});
+
+Deno.test("request log records retry count once after retry success", async () => {
+    const router = createBareRouter() as any;
+    await configureRouter(router, [{
+        name: "demo",
+        default_max_retries: 3,
+        endpoints: [{
+            base_url: "https://upstream.example/v1",
+            keys: ["key-1", "key-2", "key-3"],
+        }],
+    }]);
+    let calls = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() => {
+        calls++;
+        if (calls < 3) return Promise.resolve(new Response("failed", { status: 500 }));
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), {
+            headers: { "content-type": "application/json" },
+        }));
+    }) as typeof fetch;
+
+    try {
+        const response = await router.handleRequest(jsonRequest(
+            "http://local/v1/chat/completions",
+            { model: "demo" },
+            "Bearer unused",
+        ));
+        await response.text();
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+
+    const records = router.requestLogStore.query({ limit: 10 }).records;
+    assertEquals(calls, 3);
+    assertEquals(records.length, 1);
+    assertEquals(records[0].retryCount, 2);
+    assertEquals(records[0].status, 200);
+});
+
+Deno.test("request log preserves original and resolved redirect models", async () => {
+    const router = createBareRouter() as any;
+    await configureRouter(router, [
+        { name: "alias", endpoints: [], redirects: [{ pre: "*", to: "target" }] },
+        {
+            name: "target",
+            endpoints: [{ base_url: "https://upstream.example/v1", keys: ["key-1"] }],
+        },
+    ]);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify({ ok: true }), {
+        headers: { "content-type": "application/json" },
+    }))) as typeof fetch;
+
+    try {
+        const response = await router.handleRequest(jsonRequest(
+            "http://local/v1/chat/completions",
+            { model: "alias" },
+            "Bearer unused",
+        ));
+        await response.text();
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+
+    const record = router.requestLogStore.query({ limit: 10 }).records[0];
+    assertEquals(record.originalModel, "alias");
+    assertEquals(record.resolvedModel, "target");
+});
+
+Deno.test("request log waits for stream completion", async () => {
+    const router = createBareRouter() as any;
+    await configureRouter(router, [{
+        name: "demo",
+        endpoints: [{ base_url: "https://upstream.example/v1", keys: ["key-1"] }],
+    }]);
+    const payload = 'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n';
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() => Promise.resolve(new Response(payload, {
+        headers: { "content-type": "text/event-stream" },
+    }))) as typeof fetch;
+
+    try {
+        const response = await router.handleRequest(jsonRequest(
+            "http://local/v1/chat/completions",
+            { model: "demo", stream: true },
+            "Bearer unused",
+        ));
+        assertEquals(router.requestLogStore.query().records.length, 0);
+        await response.text();
+        await new Promise(resolve => setTimeout(resolve, 0));
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+
+    const records = router.requestLogStore.query().records;
+    assertEquals(records.length, 1);
+    assertEquals(records[0].status, 200);
+    assertEquals(records[0].stream, true);
+});
+
+Deno.test("request log marks interrupted streams as failed", async () => {
+    const router = createBareRouter() as any;
+    await configureRouter(router, [{
+        name: "demo",
+        endpoints: [{ base_url: "https://upstream.example/v1", keys: ["key-1"] }],
+    }]);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() => Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+            controller.enqueue(new TextEncoder().encode("data: {}\n"));
+            controller.error(new Error("connection lost"));
+        },
+    }), { headers: { "content-type": "text/event-stream" } }))) as typeof fetch;
+
+    try {
+        const response = await router.handleRequest(jsonRequest(
+            "http://local/v1/chat/completions",
+            { model: "demo", stream: true },
+            "Bearer unused",
+        ));
+        try {
+            await response.text();
+        } catch (_) {
+            // Expected stream failure.
+        }
+        await new Promise(resolve => setTimeout(resolve, 0));
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+
+    const record = router.requestLogStore.query().records[0];
+    assert(record.status >= 500, "interrupted stream should be recorded as a failed request");
+    assert(record.error?.includes("connection lost"), "stream error summary should be recorded");
+});
+
+Deno.test("stream wrapper preserves tool call SSE bytes exactly", async () => {
+    const router = createBareRouter() as any;
+    const endpoint = new EndpointManager(["upstream-key"], 1, 60_000, 3_600_000, new Logger("error"));
+    const payload = [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\\"city\\":"}}]}}]}',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"Hong Kong\\"}"}}]},"finish_reason":"tool_calls"}]}',
+        "data: [DONE]",
+        "",
+    ].join("\n\n");
+
+    const wrapped = router.wrapStreamResponse(
+        new Response(payload, { headers: { "content-type": "text/event-stream" } }),
+        "demo",
+        "upstream-key",
+        endpoint,
+    );
+
+    assertEquals(await wrapped.text(), payload);
 });
