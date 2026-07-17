@@ -20,19 +20,18 @@ export function getAdminPageResponse(): Response {
     <!-- ====== 侧边栏 ====== -->
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-logo">
-            <span class="logo-icon">🔧</span>
-            API Router
-            <span class="sub">v1.0</span>
+            <span class="brand-mark">AR</span>
+            <span class="brand-copy"><strong>API Router</strong><small>Operations console</small></span>
         </div>
         <nav class="sidebar-nav" id="sidebar-nav">
-            <button class="active" data-page="dashboard"><span class="nav-icon">📊</span> <span>仪表盘</span></button>
-            <button data-page="models"><span class="nav-icon">📦</span> <span>模型管理</span></button>
-            <button data-page="endpoints"><span class="nav-icon">🔗</span> <span>端点管理</span></button>
-            <button data-page="token"><span class="nav-icon">📈</span> <span>Token 统计</span></button>
-            <button data-page="config"><span class="nav-icon">⚙️</span> <span>配置编辑</span></button>
+            <button class="active" data-page="dashboard"><i data-lucide="layout-dashboard"></i><span>仪表盘</span></button>
+            <button data-page="models"><i data-lucide="box"></i><span>模型</span></button>
+            <button data-page="endpoints"><i data-lucide="waypoints"></i><span>端点</span></button>
+            <button data-page="token"><i data-lucide="chart-no-axes-combined"></i><span>Token 与成本</span></button>
+            <button data-page="config"><i data-lucide="file-cog"></i><span>配置</span></button>
         </nav>
         <div class="sidebar-footer">
-            <span class="status-dot"></span> 运行中
+            <span class="status-dot"></span><span>路由服务在线</span>
         </div>
     </aside>
 
@@ -40,7 +39,7 @@ export function getAdminPageResponse(): Response {
     <div class="main">
         <header class="main-header">
             <button class="icon-btn mobile-nav-toggle" id="mobile-nav-toggle" title="打开导航" aria-label="打开导航"><i data-lucide="menu"></i></button>
-            <h1 id="page-title">📊 仪表盘</h1>
+            <h1 id="page-title">仪表盘</h1>
             <div class="header-right" id="header-info"></div>
         </header>
         <div class="main-body">

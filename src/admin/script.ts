@@ -6,6 +6,8 @@ export function getAdminScriptResponse(): Response {
             const API = {
                 AUTH_CHECK: BASE + '/admin/auth-check',
                 STATUS: BASE + '/admin/status',
+                DASHBOARD: BASE + '/admin/dashboard-summary',
+                REQUEST_LOGS: BASE + '/admin/request-logs',
                 TOKEN_STATS: BASE + '/admin/token-stats',
                 TOKEN_COST: BASE + '/admin/token-stats/cost',
                 REMOVE_KEY: BASE + '/admin/remove-key',
@@ -21,6 +23,13 @@ export function getAdminScriptResponse(): Response {
             let refreshCountdown = 0;
             let countdownInterval = null;
             let selectedModelName = null;
+            let dashboardCharts = {};
+            let requestLogRows = [];
+            let latestLogId = 0;
+            let requestLogPaused = false;
+            let requestLogInterval = null;
+            let configDirty = false;
+            let loadingConfig = false;
 
             // ======================== Toast ========================
             function showToast(message, type, duration) {
@@ -158,13 +167,17 @@ export function getAdminScriptResponse(): Response {
 
             // ======================== 页面导航（侧边栏） ========================
             function switchPage(pageName) {
+                var activePage = document.querySelector('.page.active');
+                if (activePage && activePage.id === 'page-config' && pageName !== 'config' && configDirty) {
+                    if (!window.confirm('配置尚未保存，确认离开？')) return;
+                }
                 document.querySelectorAll('.sidebar-nav button').forEach(function(b) {
                     b.classList.toggle('active', b.dataset.page === pageName);
                 });
                 document.querySelectorAll('.page').forEach(function(p) {
                     p.classList.toggle('active', p.id === 'page-' + pageName);
                 });
-                var titles = { dashboard:'📊 仪表盘', models:'📦 模型管理', endpoints:'🔗 端点管理', token:'📈 Token 统计', config:'⚙️ 配置编辑' };
+                var titles = { dashboard:'仪表盘', models:'模型', endpoints:'端点', token:'Token 与成本', config:'配置' };
                 document.getElementById('page-title').textContent = titles[pageName] || pageName;
                 sessionStorage.setItem('active_page', pageName);
 
@@ -179,6 +192,8 @@ export function getAdminScriptResponse(): Response {
                 if (pageName === 'models' && selectedModelName) {
                     setTimeout(function(){ loadModelDetail(selectedModelName); }, 50);
                 }
+                if (window.innerWidth <= 600) document.getElementById('sidebar').classList.remove('open');
+                refreshIcons();
             }
 
             document.querySelectorAll('.sidebar-nav button').forEach(function(btn) {
@@ -231,6 +246,212 @@ export function getAdminScriptResponse(): Response {
                 if (currentVal && modelSet.has(currentVal)) select.value = currentVal;
             }
 
+            function refreshIcons() {
+                if (window.lucide && typeof window.lucide.createIcons === 'function') {
+                    window.lucide.createIcons({ attrs: { 'stroke-width': 1.8 } });
+                }
+            }
+
+            function setMetric(id, value, detail) {
+                var node = document.getElementById(id);
+                if (!node) return;
+                var strong = node.querySelector('strong');
+                var small = node.querySelector('small');
+                if (strong) strong.textContent = value;
+                if (small && detail !== undefined) small.textContent = detail;
+            }
+
+            function initDashboardChart(id) {
+                var node = document.getElementById(id);
+                if (!node || !window.echarts) return null;
+                if (!dashboardCharts[id]) dashboardCharts[id] = window.echarts.init(node);
+                return dashboardCharts[id];
+            }
+
+            function chartFallback(id, message) {
+                var node = document.getElementById(id);
+                if (node && !window.echarts) {
+                    node.innerHTML = '<div class="empty-state"><p>' + escapeHtml(message) + '</p></div>';
+                }
+            }
+
+            async function loadDashboardSummary() {
+                try {
+                    var responses = await Promise.all([
+                        authFetch(API.DASHBOARD + '?window=24h'),
+                        authFetch(API.TOKEN_STATS + '/hourly?hours=24'),
+                    ]);
+                    if (!responses[0].ok) throw new Error('HTTP ' + responses[0].status);
+                    var summary = await responses[0].json();
+                    var tokenTimeline = responses[1].ok ? await responses[1].json() : [];
+                    renderDashboardSummary(summary, tokenTimeline);
+                    document.getElementById('last-updated').textContent = '更新于 ' + formatTime(Date.now());
+                } catch (err) {
+                    if (err.message !== 'Unauthorized') {
+                        document.getElementById('last-updated').textContent = '数据已过期';
+                        showToast('仪表盘更新失败: ' + err.message, 'warning');
+                    }
+                }
+            }
+
+            function renderDashboardSummary(data, tokenTimeline) {
+                setMetric('metric-requests', Number(data.request_count || 0).toLocaleString(), '最近 24 小时');
+                setMetric('metric-tokens', fmtUnit(data.total_tokens || 0), '输入与输出');
+                setMetric('metric-cost', '$' + Number(data.total_cost_usd || 0).toFixed(4), '预估 USD');
+                setMetric('metric-success', Number(data.success_rate || 0).toFixed(2) + '%', 'HTTP < 400');
+                setMetric('metric-p95', formatDuration(data.p95_latency_ms || 0), '端到端');
+                setMetric('metric-keys', (data.active_keys || 0) + ' / ' + (data.total_keys || 0), '冷却 ' + (data.cooling_keys || 0));
+                setMetric('metric-endpoints', (data.available_endpoints || 0) + ' / ' + (data.total_endpoints || 0), '实时健康');
+                setMetric('metric-errors', Number(data.error_count || 0).toLocaleString(), '最近 24 小时');
+                renderRequestChart(data.timeline || []);
+                renderTokenCostChart(tokenTimeline || [], data.total_cost_usd || 0);
+                renderModelShareChart(data.models || []);
+            }
+
+            function renderRequestChart(timeline) {
+                var chart = initDashboardChart('chart-requests');
+                if (!chart) { chartFallback('chart-requests', '图表组件未加载'); return; }
+                chart.setOption({
+                    animationDuration: 260,
+                    grid: { left: 46, right: 18, top: 20, bottom: 28 },
+                    tooltip: { trigger: 'axis' },
+                    legend: { right: 14, top: 2, itemWidth: 10, textStyle: { fontSize: 10 } },
+                    xAxis: { type: 'category', data: timeline.map(function(item) { return item.bucket.slice(11); }), axisLabel: { fontSize: 9 }, axisTick: { show: false } },
+                    yAxis: { type: 'value', minInterval: 1, axisLabel: { fontSize: 9 }, splitLine: { lineStyle: { color: '#edf0f2' } } },
+                    series: [
+                        { name: '请求', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2, color: '#167c73' }, areaStyle: { color: 'rgba(22,124,115,.08)' }, data: timeline.map(function(item) { return item.requestCount; }) },
+                        { name: '异常', type: 'bar', barMaxWidth: 10, itemStyle: { color: '#c84a42' }, data: timeline.map(function(item) { return item.errorCount; }) },
+                    ],
+                }, true);
+            }
+
+            function renderTokenCostChart(timeline, totalCost) {
+                var chart = initDashboardChart('chart-token-cost');
+                if (!chart) { chartFallback('chart-token-cost', '图表组件未加载'); return; }
+                chart.setOption({
+                    animationDuration: 260,
+                    grid: { left: 58, right: 20, top: 28, bottom: 28 },
+                    tooltip: { trigger: 'axis', formatter: function(points) { return points[0].axisValue + '<br>Token: ' + Number(points[0].value).toLocaleString() + '<br>24h 成本: $' + Number(totalCost).toFixed(4); } },
+                    xAxis: { type: 'category', data: timeline.map(function(item) { return item.date.slice(11, 16); }), axisLabel: { fontSize: 9 }, axisTick: { show: false } },
+                    yAxis: { type: 'value', axisLabel: { fontSize: 9, formatter: fmtUnit }, splitLine: { lineStyle: { color: '#edf0f2' } } },
+                    series: [{ type: 'bar', barMaxWidth: 16, itemStyle: { color: '#447aa8', borderRadius: [2, 2, 0, 0] }, data: timeline.map(function(item) { return item.totalTokens || 0; }) }],
+                }, true);
+            }
+
+            function renderModelShareChart(models) {
+                var chart = initDashboardChart('chart-model-share');
+                if (!chart) { chartFallback('chart-model-share', '图表组件未加载'); return; }
+                chart.setOption({
+                    animationDuration: 260,
+                    color: ['#167c73', '#447aa8', '#c27a21', '#6d6a9c', '#6e8797', '#c84a42'],
+                    tooltip: { trigger: 'item' },
+                    legend: { type: 'scroll', bottom: 2, textStyle: { fontSize: 9 } },
+                    series: [{ type: 'pie', radius: ['42%', '68%'], center: ['50%', '43%'], label: { show: false }, data: models.map(function(item) { return { name: item.model, value: item.requestCount }; }) }],
+                }, true);
+            }
+
+            function renderHealthMatrix(data) {
+                var container = document.getElementById('endpoint-health-matrix');
+                if (!container) return;
+                var rows = [];
+                Object.keys(data || {}).forEach(function(name) {
+                    if (name === '_summary') return;
+                    (data[name] || []).forEach(function(endpoint) {
+                        var keys = endpoint.keys || {};
+                        var total = keys.total || 0;
+                        var active = keys.active || 0;
+                        var health = total > 0 ? Math.round(active / total * 100) : 0;
+                        rows.push('<div class="health-row" title="' + escapeHtml(endpoint.base_url || '') + '">' +
+                            '<span class="health-name">' + escapeHtml(extractModelPattern(name)) + '</span>' +
+                            '<span class="health-meter"><span style="width:' + health + '%;background:' + (health >= 80 ? '#2f8f62' : health >= 50 ? '#c27a21' : '#c84a42') + '"></span></span>' +
+                            '<span class="health-keys">' + active + ' / ' + total + '</span></div>');
+                    });
+                });
+                container.innerHTML = rows.length ? rows.join('') : '<div class="empty-state"><p>暂无端点</p></div>';
+            }
+
+            function formatDuration(ms) {
+                if (ms >= 1000) return (ms / 1000).toFixed(ms >= 10_000 ? 0 : 1) + 's';
+                return Math.round(ms) + 'ms';
+            }
+
+            function resetRequestLogs() {
+                requestLogRows = [];
+                latestLogId = 0;
+                renderRequestLogs();
+                loadRequestLogs();
+            }
+
+            async function loadRequestLogs() {
+                if (requestLogPaused) return;
+                try {
+                    var url = API.REQUEST_LOGS + '?after=' + latestLogId + '&limit=100';
+                    var model = document.getElementById('request-log-model').value.trim();
+                    var path = document.getElementById('request-log-path').value;
+                    if (model) url += '&model=' + encodeURIComponent(model);
+                    if (path) url += '&path=' + encodeURIComponent(path);
+                    var response = await authFetch(url);
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    var data = await response.json();
+                    if (data.latest_id < latestLogId) requestLogRows = [];
+                    latestLogId = data.latest_id || 0;
+                    if (data.records && data.records.length) {
+                        var known = new Set(requestLogRows.map(function(row) { return row.id; }));
+                        data.records.forEach(function(row) { if (!known.has(row.id)) requestLogRows.push(row); });
+                        if (requestLogRows.length > 200) requestLogRows = requestLogRows.slice(-200);
+                    }
+                    renderRequestLogs();
+                } catch (err) {
+                    if (err.message !== 'Unauthorized') {
+                        var table = document.getElementById('request-log-table');
+                        if (table && requestLogRows.length === 0) table.innerHTML = '<tr><td colspan="5" class="muted-cell">日志暂不可用</td></tr>';
+                    }
+                }
+            }
+
+            function renderRequestLogs() {
+                var table = document.getElementById('request-log-table');
+                if (!table) return;
+                var statusFilter = document.getElementById('request-log-status').value;
+                var rows = requestLogRows.filter(function(row) {
+                    if (statusFilter === '400') return row.status >= 400 && row.status < 500;
+                    if (statusFilter === '500') return row.status >= 500;
+                    if (statusFilter) return String(row.status) === statusFilter;
+                    return true;
+                }).slice().reverse();
+                if (!rows.length) {
+                    table.innerHTML = '<tr><td colspan="5" class="muted-cell">等待匹配的请求...</td></tr>';
+                    return;
+                }
+                table.innerHTML = rows.map(function(row) {
+                    var statusClass = row.status >= 500 ? 'error' : row.status >= 400 ? 'warn' : '';
+                    var errorClass = row.status >= 400 ? ' is-error' : '';
+                    return '<tr class="request-row' + errorClass + '" data-log-id="' + row.id + '">' +
+                        '<td>' + new Date(row.timestamp).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '</td>' +
+                        '<td><span class="status-code ' + statusClass + '">' + row.status + '</span></td>' +
+                        '<td><span class="request-model">' + escapeHtml(row.resolvedModel || row.originalModel) + '</span><span class="request-path">' + escapeHtml(row.path) + '</span></td>' +
+                        '<td>' + formatDuration(row.durationMs || 0) + '</td>' +
+                        '<td>' + (row.totalTokens === undefined ? '—' : fmtUnit(row.totalTokens)) + '</td></tr>' +
+                        '<tr class="request-detail" data-detail-id="' + row.id + '" hidden><td colspan="5">' +
+                        '原始模型: ' + escapeHtml(row.originalModel) + '<br>' +
+                        '上游: ' + escapeHtml(row.upstreamBaseUrl || '未选择') + '<br>' +
+                        '模式: ' + (row.stream ? '流式' : '非流式') + ' · 重试: ' + row.retryCount +
+                        (row.error ? '<br>错误: ' + escapeHtml(row.error) : '') + '</td></tr>';
+                }).join('');
+                table.querySelectorAll('.request-row').forEach(function(row) {
+                    row.addEventListener('click', function() {
+                        var detail = table.querySelector('[data-detail-id="' + row.dataset.logId + '"]');
+                        if (detail) detail.hidden = !detail.hidden;
+                    });
+                });
+            }
+
+            function startRequestLogPolling() {
+                if (requestLogInterval) clearInterval(requestLogInterval);
+                requestLogInterval = setInterval(loadRequestLogs, 2000);
+                loadRequestLogs();
+            }
+
             // ======================== 仪表盘 ========================
             async function loadStatus() {
                 try {
@@ -239,6 +460,7 @@ export function getAdminScriptResponse(): Response {
                     currentStatusData = await res.json();
                     renderSummary(currentStatusData);
                     renderDashboardStatus(currentStatusData);
+                    renderHealthMatrix(currentStatusData);
                     updateModelSelect(currentStatusData);
                     document.getElementById('last-updated').textContent = '更新于 ' + formatTime(Date.now());
                 } catch (err) {
@@ -1060,7 +1282,13 @@ export function getAdminScriptResponse(): Response {
             function initCodeMirror() {
                 var ta = document.getElementById('config-editor');
                 if (!ta || codeMirrorEditor) return;
-                codeMirrorEditor = CodeMirror.fromTextArea(ta, {
+                if (!window.CodeMirror) {
+                    ta.style.display = 'block';
+                    ta.style.minHeight = 'calc(100vh - 210px)';
+                    ta.addEventListener('input', markConfigDirty);
+                    return;
+                }
+                codeMirrorEditor = window.CodeMirror.fromTextArea(ta, {
                     mode: 'yaml', theme: 'default', lineNumbers: true, lineWrapping: true,
                     indentUnit: 2, tabSize: 2, indentWithTabs: false, styleActiveLine: true, viewportMargin: Infinity,
                 });
@@ -1068,17 +1296,40 @@ export function getAdminScriptResponse(): Response {
                 codeMirrorEditor.on('keydown', function(cm, e) {
                     if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveConfig(); }
                 });
+                codeMirrorEditor.on('change', function() {
+                    if (!loadingConfig) markConfigDirty();
+                });
+            }
+
+            function markConfigDirty() {
+                configDirty = true;
+                document.getElementById('config-status').innerHTML = '<span style="color:var(--warning);font-weight:600;">存在未保存修改</span>';
+            }
+
+            function getConfigEditorValue() {
+                return codeMirrorEditor ? codeMirrorEditor.getValue() : document.getElementById('config-editor').value;
+            }
+
+            function setConfigEditorValue(value) {
+                loadingConfig = true;
+                if (codeMirrorEditor) {
+                    codeMirrorEditor.setValue(value);
+                    codeMirrorEditor.clearHistory();
+                } else {
+                    document.getElementById('config-editor').value = value;
+                }
+                loadingConfig = false;
             }
 
             async function loadConfigToEditor() {
                 if (!codeMirrorEditor) initCodeMirror();
                 try {
-                    codeMirrorEditor.setValue('加载中...');
+                    setConfigEditorValue('加载中...');
                     var res = await authFetch(API.CONFIG);
                     if (!res.ok) throw new Error('HTTP ' + res.status);
                     var text = await res.text();
-                    codeMirrorEditor.setValue(text);
-                    codeMirrorEditor.clearHistory();
+                    setConfigEditorValue(text);
+                    configDirty = false;
                     document.getElementById('config-status').innerHTML = '<span style="color:var(--success);font-weight:600;">✅ 配置已加载 (' + formatTime(Date.now()) + ')</span>';
                 } catch (err) {
                     if (err.message !== 'Unauthorized') {
@@ -1088,11 +1339,11 @@ export function getAdminScriptResponse(): Response {
             }
 
             async function saveConfig() {
-                if (!codeMirrorEditor) return;
-                var yaml = codeMirrorEditor.getValue();
+                var yaml = getConfigEditorValue();
                 try {
                     var res = await authFetch(API.CONFIG, { method: 'POST', body: yaml });
                     if (!res.ok) { var err = await res.text(); throw new Error(err); }
+                    configDirty = false;
                     document.getElementById('config-status').innerHTML = '<span style="color:var(--success);font-weight:600;">✅ 配置已保存（热加载将自动生效）(' + formatTime(Date.now()) + ')</span>';
                     showToast('配置已保存', 'success');
                 } catch (err) {
@@ -1106,13 +1357,17 @@ export function getAdminScriptResponse(): Response {
             document.getElementById('btn-load-config').addEventListener('click', loadConfigToEditor);
             document.getElementById('btn-save-config').addEventListener('click', saveConfig);
             document.getElementById('btn-download-config').addEventListener('click', function() {
-                if (!codeMirrorEditor) return;
-                var text = codeMirrorEditor.getValue();
+                var text = getConfigEditorValue();
                 var blob = new Blob([text], { type: 'text/yaml' });
                 var url = URL.createObjectURL(blob);
                 var a = document.createElement('a');
                 a.href = url; a.download = 'config.yaml'; a.click();
                 URL.revokeObjectURL(url);
+            });
+            window.addEventListener('beforeunload', function(event) {
+                if (!configDirty) return;
+                event.preventDefault();
+                event.returnValue = '';
             });
 
             // ======================== 自动刷新带倒计时 ========================
@@ -1135,27 +1390,47 @@ export function getAdminScriptResponse(): Response {
             function startAutoRefresh() {
                 if (autoRefreshInterval) clearInterval(autoRefreshInterval);
                 autoRefreshInterval = setInterval(function() {
-                    if (autoRefreshEnabled) loadStatus();
+                    if (autoRefreshEnabled) {
+                        loadStatus();
+                        loadDashboardSummary();
+                    }
                 }, 5000);
-                document.getElementById('btn-auto-refresh').textContent = '⏸️';
+                document.getElementById('btn-auto-refresh').innerHTML = '<i data-lucide="pause"></i>';
+                document.getElementById('btn-auto-refresh').title = '暂停自动刷新';
                 autoRefreshEnabled = true;
                 startCountdown();
+                refreshIcons();
             }
 
             function stopAutoRefresh() {
                 if (autoRefreshInterval) clearInterval(autoRefreshInterval);
                 autoRefreshInterval = null;
-                document.getElementById('btn-auto-refresh').textContent = '▶️';
+                document.getElementById('btn-auto-refresh').innerHTML = '<i data-lucide="play"></i>';
+                document.getElementById('btn-auto-refresh').title = '恢复自动刷新';
                 autoRefreshEnabled = false;
                 if (countdownInterval) clearInterval(countdownInterval);
                 document.getElementById('countdown-timer').textContent = '';
+                refreshIcons();
             }
 
             document.getElementById('btn-auto-refresh').addEventListener('click', function() {
                 if (autoRefreshEnabled) stopAutoRefresh(); else startAutoRefresh();
             });
-            document.getElementById('btn-refresh').addEventListener('click', function() { loadStatus(); });
+            document.getElementById('btn-refresh').addEventListener('click', function() { loadStatus(); loadDashboardSummary(); });
             document.getElementById('btn-ep-refresh').addEventListener('click', function() { loadEndpointView(); });
+            document.getElementById('btn-log-pause').addEventListener('click', function() {
+                requestLogPaused = !requestLogPaused;
+                this.innerHTML = requestLogPaused ? '<i data-lucide="play"></i>' : '<i data-lucide="pause"></i>';
+                this.title = requestLogPaused ? '恢复日志' : '暂停日志';
+                if (!requestLogPaused) loadRequestLogs();
+                refreshIcons();
+            });
+            document.getElementById('request-log-model').addEventListener('change', resetRequestLogs);
+            document.getElementById('request-log-status').addEventListener('change', renderRequestLogs);
+            document.getElementById('request-log-path').addEventListener('change', resetRequestLogs);
+            document.getElementById('mobile-nav-toggle').addEventListener('click', function() {
+                document.getElementById('sidebar').classList.toggle('open');
+            });
 
             // Token 统计事件
             document.getElementById('token-model').addEventListener('change', function() { loadTokenCharts(); });
@@ -1191,11 +1466,14 @@ export function getAdminScriptResponse(): Response {
                 var savedPage = sessionStorage.getItem('active_page') || 'dashboard';
                 switchPage(savedPage);
                 loadStatus();
+                loadDashboardSummary();
                 loadModels();
                 if (savedPage === 'endpoints') { setTimeout(function() { loadEndpointView(); }, 200); }
                 if (savedPage === 'token') { setTimeout(function() { loadTokenCharts(); }, 200); }
                 if (savedPage === 'config') { setTimeout(function() { initCodeMirror(); loadConfigToEditor(); }, 200); }
                 startAutoRefresh();
+                startRequestLogPolling();
+                refreshIcons();
             }
 
             // Visibility
@@ -1205,7 +1483,14 @@ export function getAdminScriptResponse(): Response {
                 } else {
                     if (autoRefreshEnabled) startAutoRefresh();
                     loadStatus();
+                    loadDashboardSummary();
+                    loadRequestLogs();
                 }
+            });
+
+            window.addEventListener('resize', function() {
+                Object.keys(dashboardCharts).forEach(function(key) { dashboardCharts[key].resize(); });
+                Object.keys(tokenChartInst).forEach(function(key) { tokenChartInst[key].resize(); });
             });
 
             // Start
