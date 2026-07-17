@@ -179,8 +179,38 @@ async function handlePoolRoutes(
             base_url: ep.base_url,
             key_count: ep.keys?.length || 0,
             weight: ep.weight || 1,
+            timeout: ep.timeout,
+            max_retries: ep.max_retries,
+            referenced_by: getPoolReferences(config, name),
+            runtime: summarizePoolRuntime(router, name),
         }));
         return jsonResponse(result);
+    }
+
+    // POST /admin/api/endpoint-pool          → 创建池端点
+    if (path === "/admin/api/endpoint-pool" && method === "POST") {
+        const config = await readConfig(configPath);
+        try {
+            const body = await req.json();
+            const poolName = typeof body.name === "string" ? body.name.trim() : "";
+            if (!poolName) return jsonError("端点池名称不能为空");
+            config.endpoint_pool = config.endpoint_pool || {};
+            if (config.endpoint_pool[poolName]) {
+                return jsonError(`端点池 '${poolName}' 已存在`, 409);
+            }
+            const endpoint: EndpointConfig = {
+                base_url: body.base_url,
+                keys: body.keys ?? [],
+                weight: body.weight ?? 1,
+                timeout: body.timeout,
+                max_retries: body.max_retries,
+            };
+            config.endpoint_pool[poolName] = endpoint;
+            await writeAndReload(configPath, config, router);
+            return jsonResponse({ name: poolName, ...endpoint }, 201);
+        } catch (err) {
+            return jsonError(`请求体无效: ${errMsg(err)}`);
+        }
     }
 
     // GET  /admin/api/endpoint-pool/:name    → 获取单个池端点 + Key 运行时状态
@@ -201,7 +231,54 @@ async function handlePoolRoutes(
                 cooldown: st ? st.cooldown : false,
             };
         });
-        return jsonResponse({ name: poolName, base_url: ep.base_url, keys, weight: ep.weight || 1 });
+        return jsonResponse({
+            name: poolName,
+            base_url: ep.base_url,
+            keys,
+            weight: ep.weight || 1,
+            timeout: ep.timeout,
+            max_retries: ep.max_retries,
+            referenced_by: getPoolReferences(config, poolName),
+        });
+    }
+
+    // PUT/DELETE /admin/api/endpoint-pool/:name → 更新或删除池端点
+    if (m && method === "PUT") {
+        const poolName = decodeURIComponent(m[1]);
+        const config = await readConfig(configPath);
+        const current = config.endpoint_pool?.[poolName];
+        if (!current) return jsonError(`端点池 '${poolName}' 未找到`, 404);
+        try {
+            const body = await req.json();
+            const updated: EndpointConfig = {
+                base_url: body.base_url,
+                keys: body.keys !== undefined ? body.keys : current.keys,
+                weight: body.weight !== undefined ? body.weight : (current.weight ?? 1),
+            };
+            const timeout = body.timeout !== undefined ? body.timeout : current.timeout;
+            const maxRetries = body.max_retries !== undefined ? body.max_retries : current.max_retries;
+            if (timeout !== null && timeout !== undefined) updated.timeout = timeout;
+            if (maxRetries !== null && maxRetries !== undefined) updated.max_retries = maxRetries;
+            config.endpoint_pool![poolName] = updated;
+            await writeAndReload(configPath, config, router);
+            return jsonResponse({ name: poolName, ...updated });
+        } catch (err) {
+            return jsonError(`请求体无效: ${errMsg(err)}`);
+        }
+    }
+    if (m && method === "DELETE") {
+        const poolName = decodeURIComponent(m[1]);
+        const config = await readConfig(configPath);
+        if (!config.endpoint_pool?.[poolName]) {
+            return jsonError(`端点池 '${poolName}' 未找到`, 404);
+        }
+        const references = getPoolReferences(config, poolName);
+        if (references.length > 0) {
+            return jsonError(`端点池 '${poolName}' 正被模型引用: ${references.join(", ")}`, 409);
+        }
+        delete config.endpoint_pool[poolName];
+        await writeAndReload(configPath, config, router);
+        return new Response(null, { status: 204 });
     }
 
     // POST /admin/api/endpoint-pool/:name/keys → 添加 Key
@@ -221,8 +298,7 @@ async function handlePoolRoutes(
                 return jsonError("Key 已存在");
             }
             ep.keys.push(body.key.trim());
-            await saveConfig(configPath, config);
-            router.addPoolKey(poolName, body.key.trim());
+            await writeAndReload(configPath, config, router);
             return jsonResponse({ key: body.key.trim(), index: ep.keys.length - 1 }, 201);
         } catch (err) {
             return jsonError(`请求体无效: ${errMsg(err)}`);
@@ -240,10 +316,8 @@ async function handlePoolRoutes(
         if (!ep.keys || keyIdx >= ep.keys.length) {
             return jsonError(`Key 索引 ${keyIdx} 超出范围`, 404);
         }
-        const keyValue = ep.keys[keyIdx];
         ep.keys.splice(keyIdx, 1);
-        await saveConfig(configPath, config);
-        router.removePoolKey(poolName, keyValue);
+        await writeAndReload(configPath, config, router);
         return new Response(null, { status: 204 });
     }
 
@@ -263,6 +337,21 @@ async function writeAndReload(configPath: string, config: RouterConfig, router: 
     if (validationError) throw new Error(validationError);
     await saveConfig(configPath, config);
     await router.reload(getModelsFromConfig(config), config.endpoint_pool, config);
+}
+
+function getPoolReferences(config: RouterConfig, poolName: string): string[] {
+    return getModelsFromConfig(config)
+        .filter(model => model.endpoint_refs?.includes(poolName))
+        .map(model => model.name);
+}
+
+function summarizePoolRuntime(router: ModelRouter, poolName: string): { total: number; active: number; cooldown: number } {
+    const statuses = router.getPoolKeyStatus(poolName);
+    return {
+        total: statuses.length,
+        active: statuses.filter(status => status.active).length,
+        cooldown: statuses.filter(status => status.cooldown).length,
+    };
 }
 
 function jsonResponse(data: unknown, status = 200): Response {
@@ -299,15 +388,21 @@ async function handleModelListCrud(
 
     switch (method) {
         case "GET": {
-            const summary = models.map(m => ({
-                name: m.name,
-                endpoint_count: m.endpoints?.length || 0,
-                endpoint_ref_count: m.endpoint_refs?.length || 0,
-                key_count: m.endpoints?.reduce((sum, ep) => sum + (ep.keys?.length || 0), 0) || 0,
-                type: m.type || null,
-                redirect_count: m.redirects?.length || (m.redirect_to ? 1 : 0),
-                has_refs: !!(m.endpoint_refs && m.endpoint_refs.length > 0),
-            }));
+            const pool = config.endpoint_pool || {};
+            const summary = models.map(m => {
+                const directKeyCount = m.endpoints?.reduce((sum, ep) => sum + (ep.keys?.length || 0), 0) || 0;
+                const poolKeyCount = m.endpoint_refs?.reduce((sum, ref) => sum + (pool[ref]?.keys?.length || 0), 0) || 0;
+                return {
+                    name: m.name,
+                    endpoint_count: m.endpoints?.length || 0,
+                    endpoint_ref_count: m.endpoint_refs?.length || 0,
+                    direct_key_count: directKeyCount,
+                    key_count: directKeyCount + poolKeyCount,
+                    type: m.type || null,
+                    redirect_count: m.redirects?.length || (m.redirect_to ? 1 : 0),
+                    has_refs: !!(m.endpoint_refs && m.endpoint_refs.length > 0),
+                };
+            });
             return jsonResponse(summary);
         }
         case "POST": {
@@ -325,12 +420,15 @@ async function handleModelListCrud(
                     endpoints: body.endpoints || [],
                 };
                 if (body.type !== undefined) newModel.type = body.type;
+                if (body.endpoint_refs !== undefined) newModel.endpoint_refs = body.endpoint_refs;
                 // 清理 undefined 字段（stringify 不支持 undefined）
                 if (body.cooldown_ms !== undefined) newModel.cooldown_ms = body.cooldown_ms;
                 if (body.delete_after_failure_ms !== undefined) newModel.delete_after_failure_ms = body.delete_after_failure_ms;
                 if (body.default_timeout !== undefined) newModel.default_timeout = body.default_timeout;
                 if (body.default_max_retries !== undefined) newModel.default_max_retries = body.default_max_retries;
                 if (body.redirects !== undefined) newModel.redirects = body.redirects;
+                if (body.redirect_to !== undefined) newModel.redirect_to = body.redirect_to;
+                if (body.headers !== undefined) newModel.headers = body.headers;
                 models.push(newModel);
                 config.models = models;
                 await writeAndReload(configPath, config, router);
@@ -366,14 +464,21 @@ async function handleModelItemCrud(
         }
         case "PUT": {
             try {
-                const body: Partial<ModelConfig> = await req.json();
-                // 不允许修改 name
-                const { name, ...updatableFields } = body;
-                const updatedModel: ModelConfig = {
-                    ...models[idx],
-                    ...updatableFields,
-                    name: models[idx].name, // 保持原名
-                };
+                const body = await req.json() as Record<string, unknown>;
+                const updatedModel: ModelConfig = { ...models[idx] };
+                const optionalFields = [
+                    "type", "endpoints", "endpoint_refs", "cooldown_ms",
+                    "delete_after_failure_ms", "default_timeout", "default_max_retries",
+                    "redirect_to", "redirects", "headers",
+                ] as const;
+                for (const field of optionalFields) {
+                    if (!Object.prototype.hasOwnProperty.call(body, field)) continue;
+                    if (body[field] === null) {
+                        delete (updatedModel as unknown as Record<string, unknown>)[field];
+                    } else {
+                        (updatedModel as unknown as Record<string, unknown>)[field] = body[field];
+                    }
+                }
                 const validationError = validateModelConfig(updatedModel);
                 if (validationError) {
                     return jsonError(validationError);
@@ -387,6 +492,13 @@ async function handleModelItemCrud(
             }
         }
         case "DELETE": {
+            const referencedBy = models
+                .filter(model => model.name !== modelName &&
+                    (model.redirect_to === modelName || model.redirects?.some(rule => rule.to === modelName)))
+                .map(model => model.name);
+            if (referencedBy.length > 0) {
+                return jsonError(`模型 '${modelName}' 正被重定向规则引用: ${referencedBy.join(", ")}`, 409);
+            }
             models.splice(idx, 1);
             config.models = models;
             await writeAndReload(configPath, config, router);
@@ -440,8 +552,8 @@ async function handleEndpointListCrud(
                 if (!model.endpoints) model.endpoints = [];
                 const newEndpoint: EndpointConfig = {
                     base_url: body.base_url,
-                    keys: body.keys || [],
-                    weight: body.weight || 1,
+                    keys: body.keys ?? [],
+                    weight: body.weight ?? 1,
                     timeout: body.timeout,
                     max_retries: body.max_retries,
                 };
@@ -489,11 +601,13 @@ async function handleEndpointItemCrud(
                 }
                 const updatedEndpoint: EndpointConfig = {
                     base_url: body.base_url,
-                    keys: body.keys || model.endpoints[endpointIdx].keys,
-                    weight: body.weight || 1,
-                    timeout: body.timeout !== undefined ? body.timeout : model.endpoints[endpointIdx].timeout,
-                    max_retries: body.max_retries !== undefined ? body.max_retries : model.endpoints[endpointIdx].max_retries,
+                    keys: body.keys !== undefined ? body.keys : model.endpoints[endpointIdx].keys,
+                    weight: body.weight !== undefined ? body.weight : (model.endpoints[endpointIdx].weight ?? 1),
                 };
+                const timeout = body.timeout !== undefined ? body.timeout : model.endpoints[endpointIdx].timeout;
+                const maxRetries = body.max_retries !== undefined ? body.max_retries : model.endpoints[endpointIdx].max_retries;
+                if (timeout !== null && timeout !== undefined) updatedEndpoint.timeout = timeout;
+                if (maxRetries !== null && maxRetries !== undefined) updatedEndpoint.max_retries = maxRetries;
                 model.endpoints[endpointIdx] = updatedEndpoint;
                 config.models = models;
                 await writeAndReload(configPath, config, router);

@@ -245,6 +245,38 @@ Deno.test("admin secondary pages use dedicated operations workspaces", async () 
     }
 });
 
+Deno.test("endpoint workspace exposes online pool management controls", async () => {
+    const router = createBareRouter();
+    const pageResponse = await handleAdminRoutes(
+        new Request("http://local/admin"),
+        router,
+        "unused.yaml",
+    );
+    const scriptResponse = await handleAdminRoutes(
+        new Request("http://local/admin/assets/admin.js"),
+        router,
+        "unused.yaml",
+    );
+    const html = await pageResponse?.text() || "";
+    const source = await scriptResponse?.text() || "";
+
+    for (const id of [
+        "endpoint-view-tabs",
+        "endpoint-runtime-view",
+        "endpoint-pool-view",
+        "endpoint-pool-list",
+        "btn-create-pool",
+    ]) {
+        assertEquals(html.includes(`id="${id}"`), true, `missing endpoint pool control ${id}`);
+    }
+    assertEquals(source.includes("function loadEndpointPools()"), true);
+    assertEquals(source.includes("function openEndpointPoolForm("), true);
+    assertEquals(source.includes("function renderEndpointPools("), true);
+    assertEquals(source.includes("mf-pool-ref"), true);
+    assertEquals(source.includes("edit-ep-btn"), true);
+    assertEquals(source.includes("copy-key-btn"), false);
+});
+
 Deno.test("token page initial range matches the active one-hour control", async () => {
     const router = createBareRouter();
     const script = await handleAdminRoutes(

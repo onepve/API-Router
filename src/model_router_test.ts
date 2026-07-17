@@ -347,6 +347,230 @@ Deno.test("endpoint CRUD validates before saving", async () => {
     }
 });
 
+Deno.test("endpoint pool CRUD supports create update and referenced delete protection", async () => {
+    const dir = await Deno.makeTempDir();
+    const configPath = `${dir}/config.yaml`;
+    const router = createBareRouter();
+    await saveConfig(configPath, { models: [{ name: "demo", endpoints: [] }] });
+
+    try {
+        const createResponse = await handleAdminRoutes(new Request(
+            "http://local/admin/api/endpoint-pool",
+            {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                    name: "shared",
+                    base_url: "https://upstream-a.example/v1",
+                    keys: ["key-1"],
+                    weight: 2,
+                    timeout: 30,
+                    max_retries: 1,
+                }),
+            },
+        ), router, configPath);
+        assertEquals(createResponse?.status, 201);
+
+        const attachResponse = await handleAdminRoutes(new Request(
+            "http://local/admin/api/models/demo",
+            {
+                method: "PUT",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ endpoint_refs: ["shared"] }),
+            },
+        ), router, configPath);
+        assertEquals(attachResponse?.status, 200);
+
+        const updateResponse = await handleAdminRoutes(new Request(
+            "http://local/admin/api/endpoint-pool/shared",
+            {
+                method: "PUT",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                    base_url: "https://upstream-b.example/v1",
+                    weight: 3,
+                    timeout: 45,
+                    max_retries: 2,
+                }),
+            },
+        ), router, configPath);
+        assertEquals(updateResponse?.status, 200);
+
+        const listResponse = await handleAdminRoutes(
+            new Request("http://local/admin/api/endpoint-pool"),
+            router,
+            configPath,
+        );
+        const pools = await listResponse?.json();
+        assertEquals(pools[0].name, "shared");
+        assertEquals(pools[0].base_url, "https://upstream-b.example/v1");
+        assertEquals(pools[0].timeout, 45);
+        assertEquals(pools[0].max_retries, 2);
+        assertEquals(pools[0].referenced_by, ["demo"]);
+
+        const modelListResponse = await handleAdminRoutes(
+            new Request("http://local/admin/api/models"),
+            router,
+            configPath,
+        );
+        const modelList = await modelListResponse?.json();
+        assertEquals(modelList[0].direct_key_count, 0);
+        assertEquals(modelList[0].key_count, 1);
+
+        const protectedDelete = await handleAdminRoutes(new Request(
+            "http://local/admin/api/endpoint-pool/shared",
+            { method: "DELETE" },
+        ), router, configPath);
+        assertEquals(protectedDelete?.status, 409);
+
+        await handleAdminRoutes(new Request(
+            "http://local/admin/api/models/demo",
+            {
+                method: "PUT",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ endpoint_refs: null }),
+            },
+        ), router, configPath);
+        const deleteResponse = await handleAdminRoutes(new Request(
+            "http://local/admin/api/endpoint-pool/shared",
+            { method: "DELETE" },
+        ), router, configPath);
+        assertEquals(deleteResponse?.status, 204);
+        assertEquals((await loadConfig(configPath)).endpoint_pool, {});
+    } finally {
+        await Deno.remove(dir, { recursive: true });
+    }
+});
+
+Deno.test("model CRUD preserves pool references and can clear optional routing fields", async () => {
+    const dir = await Deno.makeTempDir();
+    const configPath = `${dir}/config.yaml`;
+    const router = createBareRouter();
+    await saveConfig(configPath, {
+        endpoint_pool: {
+            shared: { base_url: "https://upstream.example/v1", keys: [] },
+        },
+        models: [{ name: "base", endpoints: [] }],
+    });
+
+    try {
+        const createResponse = await handleAdminRoutes(new Request(
+            "http://local/admin/api/models",
+            {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                    name: "demo",
+                    endpoint_refs: ["shared"],
+                    type: ["chat"],
+                    redirects: [{ pre: "demo-*", to: "base", weight: 1 }],
+                    headers: { set: { "x-router": "demo" } },
+                }),
+            },
+        ), router, configPath);
+        assertEquals(createResponse?.status, 201);
+        let config = await loadConfig(configPath);
+        let model = config.models.find(m => m.name === "demo");
+        assertEquals(model?.endpoint_refs, ["shared"]);
+        assertEquals(model?.headers, { set: { "x-router": "demo" } });
+
+        const clearResponse = await handleAdminRoutes(new Request(
+            "http://local/admin/api/models/demo",
+            {
+                method: "PUT",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                    endpoint_refs: null,
+                    type: null,
+                    redirects: null,
+                    headers: null,
+                }),
+            },
+        ), router, configPath);
+        assertEquals(clearResponse?.status, 200);
+        config = await loadConfig(configPath);
+        model = config.models.find(m => m.name === "demo");
+        assertEquals(model?.endpoint_refs, undefined);
+        assertEquals(model?.type, undefined);
+        assertEquals(model?.redirects, undefined);
+        assertEquals(model?.headers, undefined);
+
+        const invalidRef = await handleAdminRoutes(new Request(
+            "http://local/admin/api/models/demo",
+            {
+                method: "PUT",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ endpoint_refs: ["missing"] }),
+            },
+        ), router, configPath);
+        assertEquals(invalidRef?.status, 400);
+    } finally {
+        await Deno.remove(dir, { recursive: true });
+    }
+});
+
+Deno.test("endpoint update rejects zero weight without replacing the endpoint", async () => {
+    const dir = await Deno.makeTempDir();
+    const configPath = `${dir}/config.yaml`;
+    const router = createBareRouter();
+    const originalConfig = {
+        models: [{
+            name: "demo",
+            endpoints: [{ base_url: "https://upstream.example/v1", keys: [], weight: 2 }],
+        }],
+    };
+    await saveConfig(configPath, originalConfig);
+
+    try {
+        const response = await handleAdminRoutes(new Request(
+            "http://local/admin/api/models/demo/endpoints/0",
+            {
+                method: "PUT",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ base_url: "https://upstream.example/v1", weight: 0 }),
+            },
+        ), router, configPath);
+        assertEquals(response?.status, 400);
+        assertEquals(await loadConfig(configPath), originalConfig);
+    } finally {
+        await Deno.remove(dir, { recursive: true });
+    }
+});
+
+Deno.test("model deletion rejects redirect references and invalid headers", async () => {
+    const dir = await Deno.makeTempDir();
+    const configPath = `${dir}/config.yaml`;
+    const router = createBareRouter();
+    const originalConfig = {
+        models: [
+            { name: "target", endpoints: [] },
+            { name: "alias", endpoints: [], redirects: [{ pre: "*", to: "target" }] },
+        ],
+    };
+    await saveConfig(configPath, originalConfig);
+
+    try {
+        const deleteResponse = await handleAdminRoutes(new Request(
+            "http://local/admin/api/models/target",
+            { method: "DELETE" },
+        ), router, configPath);
+        assertEquals(deleteResponse?.status, 409);
+
+        const headersResponse = await handleAdminRoutes(new Request(
+            "http://local/admin/api/models/target",
+            {
+                method: "PUT",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ headers: { delete: "x-invalid" } }),
+            },
+        ), router, configPath);
+        assertEquals(headersResponse?.status, 400);
+        assertEquals(await loadConfig(configPath), originalConfig);
+    } finally {
+        await Deno.remove(dir, { recursive: true });
+    }
+});
+
 Deno.test("request log records one successful final outcome", async () => {
     const router = createBareRouter() as any;
     await configureRouter(router, [{

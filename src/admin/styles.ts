@@ -875,11 +875,15 @@ export function getAdminStylesResponse(): Response {
         .model-detail-content .card-title svg { width: 16px; height: 16px; }
         .detail-section-title { display: flex; align-items: center; justify-content: space-between; margin: 17px 0 8px; color: var(--text-secondary); font-size: 11px; font-weight: 650; }
         .detail-section-title strong { display: inline-grid; place-items: center; min-width: 24px; height: 20px; padding: 0 6px; border-radius: 3px; background: #edf2f4; color: var(--text); font: 700 9px/1 ui-monospace, Consolas, monospace; }
+        .model-policy-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; padding: 8px 10px; border: 1px solid var(--border-light); border-radius: 5px; background: #f8fafb; color: var(--text-secondary); font-size: 10px; font-weight: 650; }
+        .model-policy-row > div { display: flex; gap: 4px; }
         .model-list-item { min-height: 48px; padding: 8px 10px; }
         .model-list-item .ml-name { font: 600 11px/1.35 ui-monospace, Consolas, monospace; }
         .model-list-item .ml-badges { max-width: 118px; flex-wrap: wrap; justify-content: flex-end; }
         .model-list-item .badge { font-size: 8px; }
         .model-detail-panel .ep-card { background: #f8fafb; }
+        .endpoint-card-actions { display: inline-flex; align-items: center; gap: 7px; }
+        .endpoint-card-actions .icon-btn { width: 26px; height: 26px; }
 
         .data-toolbar { min-height: 58px; display: flex; align-items: flex-end; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--border-light); }
         .filter-control { width: 190px; }
@@ -887,6 +891,14 @@ export function getAdminStylesResponse(): Response {
         .filter-control label { display: block; margin: 0 0 4px 2px; color: var(--text-muted); font-size: 9px; font-weight: 650; text-transform: uppercase; }
         .filter-control select { height: 32px; padding: 5px 9px; font-size: 11px; }
         .data-toolbar-summary { margin-left: auto; align-self: center; color: var(--text-secondary); font: 600 10px/1.3 ui-monospace, Consolas, monospace; }
+        .view-tabs { display: inline-flex; margin-bottom: 10px; padding: 3px; border: 1px solid var(--border); border-radius: 6px; background: #e9edef; }
+        .view-tabs button { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 5px 11px; border: 0; border-radius: 4px; background: transparent; color: var(--text-secondary); font-size: 10px; font-weight: 650; cursor: pointer; }
+        .view-tabs button svg { width: 14px; height: 14px; }
+        .view-tabs button.active { background: #fff; color: var(--text); box-shadow: 0 1px 2px rgba(22,33,43,.1); }
+        .pool-toolbar { align-items: center; }
+        .pool-toolbar > div:first-child { display: flex; flex-direction: column; gap: 2px; }
+        .pool-toolbar strong { font-size: 12px; }
+        .pool-toolbar span { color: var(--text-muted); font-size: 9px; }
         .endpoint-table { overflow: auto; }
         .endpoint-data-table { table-layout: fixed; min-width: 780px; }
         .endpoint-data-table th, .endpoint-data-table td { padding: 9px 11px; }
@@ -910,6 +922,38 @@ export function getAdminStylesResponse(): Response {
         .endpoint-detail-metric strong { display: block; margin-top: 3px; font: 650 12px/1.3 ui-monospace, Consolas, monospace; }
         .health-inline { display: flex; align-items: center; gap: 8px; }
         .health-inline .progress-bar { flex: 1; min-width: 58px; }
+        .pool-data-table { table-layout: fixed; min-width: 860px; }
+        .pool-data-table th, .pool-data-table td { padding: 9px 11px; }
+        .pool-data-table th:nth-child(1), .pool-data-table td:nth-child(1) { width: 34px; text-align: center; }
+        .pool-data-table th:nth-child(2), .pool-data-table td:nth-child(2) { width: 150px; }
+        .pool-data-table th:nth-child(4), .pool-data-table td:nth-child(4) { width: 130px; }
+        .pool-data-table th:nth-child(5), .pool-data-table td:nth-child(5) { width: 155px; }
+        .pool-data-table th:nth-child(6), .pool-data-table td:nth-child(6) { width: 118px; text-align: right; }
+        .pool-name { font: 650 11px/1.3 ui-monospace, Consolas, monospace; }
+        .table-subtext { margin-top: 2px; color: var(--text-muted); font-size: 9px; }
+        .pool-actions { display: flex; justify-content: flex-end; gap: 4px; }
+        .pool-detail-row[hidden] { display: none; }
+        .pool-detail-row td { padding: 0; background: #f7f9fa; }
+        .pool-detail-shell { display: grid; grid-template-columns: minmax(0, 1fr) 300px; min-height: 120px; border-top: 1px solid var(--border-light); }
+        .pool-key-list { min-width: 0; padding: 10px 12px; border-right: 1px solid var(--border-light); }
+        .pool-key-list .key-row { background: #fff; border: 1px solid var(--border-light); margin-bottom: 5px; }
+        .pool-key-list .key-row:last-child { margin-bottom: 0; }
+        .pool-key-add { padding: 12px; background: #f8fafb; }
+        .pool-key-add label { display: block; margin-bottom: 5px; color: var(--text-secondary); font-size: 10px; font-weight: 650; }
+        .pool-reference-list { display: flex; flex-wrap: wrap; gap: 4px; }
+        .modal.modal-wide { max-width: 760px; }
+        .form-section { margin: 3px 0 14px; padding-top: 13px; border-top: 1px solid var(--border-light); }
+        .form-section:first-child { padding-top: 0; border-top: 0; }
+        .form-section-title { margin-bottom: 9px; color: var(--text); font-size: 11px; font-weight: 700; }
+        .pool-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+        .pool-choice { display: flex; align-items: flex-start; gap: 8px; padding: 8px 9px; border: 1px solid var(--border); border-radius: 5px; background: #fff; cursor: pointer; }
+        .pool-choice:has(input:checked) { border-color: #8cbdb7; background: var(--primary-50); }
+        .pool-choice input { width: 14px; height: 14px; margin-top: 1px; }
+        .pool-choice span { min-width: 0; }
+        .pool-choice strong, .pool-choice small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .pool-choice strong { font: 650 10px/1.3 ui-monospace, Consolas, monospace; }
+        .pool-choice small { margin-top: 2px; color: var(--text-muted); font-size: 8px; }
+        .json-field { min-height: 86px; resize: vertical; font: 11px/1.45 ui-monospace, Consolas, monospace; }
 
         .token-header { align-items: flex-end; }
         .token-controls select { width: 190px; height: 32px; font-size: 11px; }
@@ -1000,6 +1044,9 @@ export function getAdminStylesResponse(): Response {
             .token-trend-panel { grid-column: auto; }
             .analysis-chart, .chart-wide { height: 240px; }
             .endpoint-detail-content { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .pool-detail-shell { grid-template-columns: 1fr; }
+            .pool-key-list { border-right: 0; border-bottom: 1px solid var(--border-light); }
+            .pool-choice-grid { grid-template-columns: 1fr; }
             .config-workspace { min-height: calc(100vh - 76px); }
             .config-editor-panel { min-height: 540px; }
             .sidebar.open { width: 208px; box-shadow: 12px 0 32px rgba(0,0,0,.2); }

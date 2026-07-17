@@ -188,7 +188,12 @@ export function getAdminScriptResponse(): Response {
                     }, 50);
                 }
                 if (pageName === 'config') { setTimeout(function(){ initCodeMirror(); loadConfigToEditor(); }, 50); }
-                if (pageName === 'endpoints') { setTimeout(function(){ loadEndpointView(); }, 50); }
+                if (pageName === 'endpoints') {
+                    setTimeout(function(){
+                        var activeEndpointView = document.querySelector('#endpoint-view-tabs button.active');
+                        switchEndpointView(activeEndpointView ? activeEndpointView.dataset.endpointView : 'runtime');
+                    }, 50);
+                }
                 if (pageName === 'models' && selectedModelName) {
                     setTimeout(function(){ loadModelDetail(selectedModelName); }, 50);
                 }
@@ -599,8 +604,8 @@ export function getAdminScriptResponse(): Response {
                         '<span class="ml-badges">' +
                         '<span class="badge ' + matchBadge + '">' + matchType + '</span>' +
                         refBadge +
-                        '<span class="badge badge-gray">' + (m.endpoint_count || 0) + 'EP</span>' +
-                        '<span class="badge badge-gray">' + (m.key_count || 0) + 'K</span>' +
+                        '<span class="badge badge-gray">直 ' + (m.endpoint_count || 0) + '</span>' +
+                        '<span class="badge badge-gray">Key ' + (m.key_count || 0) + '</span>' +
                         '</span></div>';
                 }).join('');
 
@@ -671,12 +676,24 @@ export function getAdminScriptResponse(): Response {
                 }
 
                 // 重定向
-                if (model.redirects && model.redirects.length > 0) {
+                var displayRedirects = model.redirects && model.redirects.length > 0
+                    ? model.redirects
+                    : (model.redirect_to ? [{ pre: '*', to: model.redirect_to, weight: 1 }] : []);
+                if (displayRedirects.length > 0) {
                     html += '<div style="margin-bottom:12px;"><span style="font-size:0.78rem;font-weight:600;color:var(--text-secondary);">↳ 重定向规则:</span> ';
-                    model.redirects.forEach(function(r) {
+                    displayRedirects.forEach(function(r) {
                         html += '<span class="badge badge-yellow" style="margin-left:4px;">' + escapeHtml(r.pre) + ' → ' + escapeHtml(r.to) + ' (w:' + (r.weight||1) + ')</span>';
                     });
                     html += '</div>';
+                }
+
+                if (model.headers) {
+                    var setHeaderNames = model.headers.set ? Object.keys(model.headers.set) : [];
+                    var deleteHeaderNames = model.headers.delete || [];
+                    html += '<div class="model-policy-row"><span>Headers 覆盖</span><div>' +
+                        (setHeaderNames.length ? '<span class="badge badge-blue">设置 ' + setHeaderNames.length + '</span>' : '') +
+                        (deleteHeaderNames.length ? '<span class="badge badge-gray">删除 ' + deleteHeaderNames.length + '</span>' : '') +
+                        '</div></div>';
                 }
 
                 // 端点列表
@@ -706,7 +723,8 @@ export function getAdminScriptResponse(): Response {
                         html += '<div class="ep-card">' +
                             '<div class="ep-header">' +
                             '<span class="ep-url">' + escapeHtml(ep.base_url) + '</span>' +
-                            '<span style="font-size:0.75rem;color:var(--text-secondary);">权重:' + (ep.weight||1) + ' 超时:' + (ep.timeout||'-') + 's</span></div>';
+                            '<span class="endpoint-card-actions"><span style="font-size:0.75rem;color:var(--text-secondary);">权重:' + (ep.weight||1) + ' 超时:' + (ep.timeout||'-') + 's</span>' +
+                            '<button class="icon-btn edit-ep-btn" data-idx="' + i + '" title="编辑端点" aria-label="编辑端点"><i data-lucide="pencil"></i></button></span></div>';
                         // Keys
                         html += '<div id="ep-keys-' + i + '">';
                         // Load key status inline
@@ -746,17 +764,25 @@ export function getAdminScriptResponse(): Response {
                             selectedModelName = null;
                             loadModels();
                             loadStatus();
-                        } else { showToast('删除失败', 'error'); }
+                        } else {
+                            var errorBody = await r.json();
+                            showToast('删除失败: ' + (errorBody.error || 'HTTP ' + r.status), 'error', 5000);
+                        }
                     });
                 });
                 detail.querySelectorAll('.edit-model-btn').forEach(function(btn) {
                     btn.addEventListener('click', function() {
-                        openModelForm(model, []);
+                        openModelForm(model);
+                    });
+                });
+                detail.querySelectorAll('.edit-ep-btn').forEach(function(btn) {
+                    btn.addEventListener('click', function() {
+                        openEndpointForm(name, endpoints[parseInt(btn.dataset.idx)], false);
                     });
                 });
                 detail.querySelectorAll('.add-ep-btn').forEach(function(btn) {
                     btn.addEventListener('click', function() {
-                        openAddEndpointForm(name);
+                        openEndpointForm(name, null, false);
                     });
                 });
                 detail.querySelectorAll('.delete-ep-btn').forEach(function(btn) {
@@ -821,9 +847,7 @@ export function getAdminScriptResponse(): Response {
                             '<span class="status-dot-sm ' + dotClass + '"></span>' +
                             '<span class="key-val" title="' + escapeHtml(k.key_preview) + '">' + escapeHtml(k.key_preview) + '</span>' +
                             '<span class="badge ' + (k.active ? 'badge-green' : k.cooldown ? 'badge-yellow' : 'badge-red') + '">' + statusText + '</span>' +
-                            '<span class="key-actions">' +
-                            '<button class="btn btn-xs btn-ghost copy-key-btn" title="复制" data-key="' + escapeHtml(k.key_preview) + '">📋</button>' +
-                            '<button class="btn btn-xs btn-ghost del-pool-key-btn" title="删除" data-pool="' + escapeHtml(poolName) + '" data-key="' + i + '" style="color:var(--danger);">✕</button></span></div>';
+                            '<span class="key-actions"><button class="icon-btn del-pool-key-btn" title="删除 Key" aria-label="删除 Key" data-pool="' + escapeHtml(poolName) + '" data-key="' + i + '"><i data-lucide="trash-2"></i></button></span></div>';
                     });
                     container.innerHTML = html;
                     container.querySelectorAll('.del-pool-key-btn').forEach(function(btn) {
@@ -835,13 +859,7 @@ export function getAdminScriptResponse(): Response {
                             else { showToast('删除失败', 'error'); }
                         });
                     });
-                    container.querySelectorAll('.copy-key-btn').forEach(function(btn) {
-                        btn.addEventListener('click', function() {
-                            navigator.clipboard.writeText(btn.dataset.key).then(function() {
-                                showToast('已复制到剪贴板', 'success');
-                            }).catch(function() { showToast('复制失败', 'error'); });
-                        });
-                    });
+                    refreshIcons();
                 } catch (e) {
                     if (e.message !== 'Unauthorized') container.innerHTML = '<p style="color:var(--danger);font-size:0.78rem;">加载失败</p>';
                 }
@@ -865,9 +883,7 @@ export function getAdminScriptResponse(): Response {
                             '<span class="status-dot-sm ' + dotClass + '"></span>' +
                             '<span class="key-val" title="' + escapeHtml(k.key_preview) + '">' + escapeHtml(k.key_preview) + '</span>' +
                             '<span class="badge ' + (k.active ? 'badge-green' : k.cooldown ? 'badge-yellow' : 'badge-red') + '">' + statusText + '</span>' +
-                            '<span class="key-actions">' +
-                            '<button class="btn btn-xs btn-ghost copy-key-btn" title="复制 Key" data-key="' + escapeHtml(k.key_preview) + '">📋</button>' +
-                            '<button class="btn btn-xs btn-ghost del-key-btn" title="删除" data-model="' + escapeHtml(modelName) + '" data-ep="' + epIdx + '" data-key="' + i + '" style="color:var(--danger);">✕</button></span></div>';
+                            '<span class="key-actions"><button class="icon-btn del-key-btn" title="删除 Key" aria-label="删除 Key" data-model="' + escapeHtml(modelName) + '" data-ep="' + epIdx + '" data-key="' + i + '"><i data-lucide="trash-2"></i></button></span></div>';
                     });
                     container.innerHTML = html;
 
@@ -880,132 +896,169 @@ export function getAdminScriptResponse(): Response {
                             else { showToast('删除失败', 'error'); }
                         });
                     });
-                    container.querySelectorAll('.copy-key-btn').forEach(function(btn) {
-                        btn.addEventListener('click', function() {
-                            navigator.clipboard.writeText(btn.dataset.key).then(function() {
-                                showToast('已复制到剪贴板', 'success');
-                                btn.parentElement.parentElement.classList.add('copy-feedback');
-                                setTimeout(function() { btn.parentElement.parentElement.classList.remove('copy-feedback'); }, 400);
-                            }).catch(function() {
-                                showToast('复制失败', 'error');
-                            });
-                        });
-                    });
+                    refreshIcons();
                 } catch (e) {
                     if (e.message !== 'Unauthorized') container.innerHTML = '<p style="color:var(--danger);font-size:0.78rem;">加载失败</p>';
                 }
             }
 
             // ======================== 模型表单 ========================
-            function openModelForm(existingModel, allModels) {
+            async function openModelForm(existingModel) {
                 var isEdit = !!existingModel;
+                var pools = [];
+                try {
+                    var poolRes = await authFetch(API.POOL);
+                    if (poolRes.ok) pools = await poolRes.json();
+                } catch (_) {}
+
                 var title = isEdit ? '编辑模型: ' + existingModel.name : '创建模型';
-                var body = '';
-                var fields = [
-                    { id: 'mf-name', label: '模型名称/匹配模式', type: 'text', value: existingModel ? existingModel.name : '', help: '支持精确匹配、前缀匹配(以*结尾)和正则匹配(以^开头)', required: true, readonly: isEdit },
-                    { id: 'mf-cooldown', label: '冷却时间(ms)', type: 'number', value: existingModel && existingModel.cooldown_ms ? existingModel.cooldown_ms : '', help: '可选，默认 60000' },
-                    { id: 'mf-delete-after', label: '持续失败删除(ms)', type: 'number', value: existingModel && existingModel.delete_after_failure_ms ? existingModel.delete_after_failure_ms : '', help: '可选，默认 3600000' },
-                    { id: 'mf-timeout', label: '默认超时(秒)', type: 'number', value: existingModel && existingModel.default_timeout ? existingModel.default_timeout : '', help: '可选' },
-                    { id: 'mf-retries', label: '默认最大重试', type: 'number', value: existingModel && existingModel.default_max_retries ? existingModel.default_max_retries : '', help: '可选' },
-                    { id: 'mf-type', label: '支持端点类型', type: 'text', value: existingModel && existingModel.type ? existingModel.type.join(', ') : '', help: '可选，逗号分隔。别名: openai, chat, completions, embeddings, images, audio, response, claude, messages。也支持字面路径如 /v1/chat/completions' },
-                ];
-                fields.forEach(function(f) {
-                    body += '<div class="form-group"><label>' + f.label + (f.required ? ' <span style="color:var(--danger)">*</span>' : '') + '</label>' +
-                        '<input type="' + f.type + '" id="' + f.id + '" value="' + escapeHtml(String(f.value || '')) + '"' +
-                        (f.readonly ? ' readonly style="background:#f1f5f9;"' : '') + '>' +
-                        (f.help ? '<div class="help">' + f.help + '</div>' : '') + '</div>';
-                });
-                // 重定向
-                body += '<div class="form-group"><label>重定向规则</label><div class="help">可选，当所有端点不可用时触发</div></div>';
-                body += '<div id="redirect-rules-container">';
-                var redirects = existingModel && existingModel.redirects ? existingModel.redirects : [];
-                if (redirects.length === 0) {
-                    body += '<div class="input-group" style="margin-bottom:8px;"><input type="text" class="rd-pre" placeholder="匹配模式(如 *)" style="flex:1;"><input type="text" class="rd-to" placeholder="目标模型" style="flex:1;"><input type="number" class="rd-weight" placeholder="权重" style="width:80px;" value="1"><button class="btn btn-sm btn-ghost remove-rule-btn" onclick="this.parentElement.remove()">✕</button></div>';
+                var body = '<div class="form-section"><div class="form-section-title">匹配与请求类型</div>';
+                body += '<div class="form-group"><label>模型名称 / 匹配模式 <span style="color:var(--danger)">*</span></label>' +
+                    '<input type="text" id="mf-name" value="' + escapeHtml(existingModel ? existingModel.name : '') + '"' + (isEdit ? ' readonly' : '') + '>' +
+                    '<div class="help">支持精确名称、以 * 结尾的前缀匹配和以 ^ 开头的正则匹配</div></div>';
+                body += '<div class="form-group"><label>支持端点类型</label><input type="text" id="mf-type" value="' + escapeHtml(existingModel && existingModel.type ? existingModel.type.join(', ') : '') + '" placeholder="chat, response, images">' +
+                    '<div class="help">逗号分隔；留空表示不限制请求路径</div></div></div>';
+
+                body += '<div class="form-section"><div class="form-section-title">共享端点池</div>';
+                if (pools.length === 0) {
+                    body += '<div class="empty-inline">当前没有端点池，可在“端点”页面创建。</div>';
                 } else {
-                    redirects.forEach(function(r) {
-                        body += '<div class="input-group" style="margin-bottom:8px;"><input type="text" class="rd-pre" placeholder="匹配模式" value="' + escapeHtml(r.pre) + '" style="flex:1;"><input type="text" class="rd-to" placeholder="目标模型" value="' + escapeHtml(r.to) + '" style="flex:1;"><input type="number" class="rd-weight" placeholder="权重" style="width:80px;" value="' + (r.weight || 1) + '"><button class="btn btn-sm btn-ghost remove-rule-btn" onclick="this.parentElement.remove()">✕</button></div>';
+                    body += '<div class="pool-choice-grid">';
+                    pools.forEach(function(pool) {
+                        var checked = existingModel && existingModel.endpoint_refs && existingModel.endpoint_refs.includes(pool.name);
+                        body += '<label class="pool-choice"><input type="checkbox" class="mf-pool-ref" value="' + escapeHtml(pool.name) + '"' + (checked ? ' checked' : '') + '><span><strong>' + escapeHtml(pool.name) + '</strong><small>' + escapeHtml(pool.base_url) + ' · ' + (pool.key_count || 0) + ' Keys</small></span></label>';
                     });
+                    body += '</div>';
                 }
                 body += '</div>';
-                body += '<button class="btn btn-sm btn-outline" id="btn-add-redirect-rule">➕ 添加重定向规则</button>';
 
-                var footer =
-                    '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
-                    '<button class="btn btn-primary" id="btn-model-save">' + (isEdit ? '保存修改' : '创建') + '</button>';
-                openModal(title, body, footer);
+                body += '<div class="form-section"><div class="form-section-title">故障策略</div><div class="form-row">' +
+                    '<div class="form-group"><label>冷却时间 (ms)</label><input type="number" id="mf-cooldown" min="0" value="' + escapeHtml(existingModel && existingModel.cooldown_ms !== undefined ? String(existingModel.cooldown_ms) : '') + '" placeholder="60000"></div>' +
+                    '<div class="form-group"><label>持续失败删除 (ms)</label><input type="number" id="mf-delete-after" min="0" value="' + escapeHtml(existingModel && existingModel.delete_after_failure_ms !== undefined ? String(existingModel.delete_after_failure_ms) : '') + '" placeholder="3600000"></div>' +
+                    '<div class="form-group"><label>默认超时 (秒)</label><input type="number" id="mf-timeout" min="1" value="' + escapeHtml(existingModel && existingModel.default_timeout !== undefined ? String(existingModel.default_timeout) : '') + '" placeholder="120"></div>' +
+                    '<div class="form-group"><label>默认最大重试</label><input type="number" id="mf-retries" min="0" value="' + escapeHtml(existingModel && existingModel.default_max_retries !== undefined ? String(existingModel.default_max_retries) : '') + '" placeholder="3"></div></div></div>';
+
+                body += '<div class="form-section"><div class="form-section-title">重定向规则</div><div id="redirect-rules-container">';
+                var redirects = existingModel && existingModel.redirects
+                    ? existingModel.redirects
+                    : (existingModel && existingModel.redirect_to ? [{ pre: '*', to: existingModel.redirect_to, weight: 1 }] : []);
+                redirects.forEach(function(rule) { body += redirectRuleHtml(rule); });
+                body += '</div><button class="btn btn-sm btn-outline" id="btn-add-redirect-rule"><i data-lucide="plus"></i>添加规则</button></div>';
+
+                var headersText = existingModel && existingModel.headers ? JSON.stringify(existingModel.headers, null, 2) : '';
+                body += '<div class="form-section"><div class="form-section-title">Headers 覆盖</div><div class="form-group"><textarea class="json-field" id="mf-headers" placeholder="{ &quot;set&quot;: { &quot;x-header&quot;: &quot;value&quot; }, &quot;delete&quot;: [&quot;x-old&quot;] }">' + escapeHtml(headersText) + '</textarea><div class="help">JSON 格式；留空使用全局 headers 策略</div></div></div>';
+
+                var footer = '<button class="btn btn-outline" onclick="closeModal()">取消</button><button class="btn btn-primary" id="btn-model-save">' + (isEdit ? '保存修改' : '创建模型') + '</button>';
+                var modal = openModal(title, body, footer);
+                modal.classList.add('modal-wide');
+                refreshIcons();
 
                 document.getElementById('btn-add-redirect-rule').addEventListener('click', function() {
-                    var c = document.getElementById('redirect-rules-container');
-                    var d = document.createElement('div');
-                    d.className = 'input-group';
-                    d.style.marginBottom = '8px';
-                    d.innerHTML = '<input type="text" class="rd-pre" placeholder="匹配模式(如 *)" style="flex:1;"><input type="text" class="rd-to" placeholder="目标模型" style="flex:1;"><input type="number" class="rd-weight" placeholder="权重" style="width:80px;" value="1"><button class="btn btn-sm btn-ghost remove-rule-btn" onclick="this.parentElement.remove()">✕</button>';
-                    c.appendChild(d);
+                    document.getElementById('redirect-rules-container').insertAdjacentHTML('beforeend', redirectRuleHtml(null));
+                    refreshIcons();
                 });
 
                 document.getElementById('btn-model-save').addEventListener('click', async function() {
                     var name = document.getElementById('mf-name').value.trim();
                     if (!name) { showToast('模型名称不能为空', 'warning'); return; }
-                    var payload = {
-                        name: name,
-                        cooldown_ms: parseInt(document.getElementById('mf-cooldown').value) || undefined,
-                        delete_after_failure_ms: parseInt(document.getElementById('mf-delete-after').value) || undefined,
-                        default_timeout: parseInt(document.getElementById('mf-timeout').value) || undefined,
-                        default_max_retries: parseInt(document.getElementById('mf-retries').value) || undefined,
-                        redirects: []
-                    };
-                    document.querySelectorAll('#redirect-rules-container .input-group').forEach(function(group) {
+                    var payload = { name: name };
+                    setOptionalNumber(payload, 'cooldown_ms', 'mf-cooldown', isEdit);
+                    setOptionalNumber(payload, 'delete_after_failure_ms', 'mf-delete-after', isEdit);
+                    setOptionalNumber(payload, 'default_timeout', 'mf-timeout', isEdit);
+                    setOptionalNumber(payload, 'default_max_retries', 'mf-retries', isEdit);
+
+                    var typeStr = document.getElementById('mf-type').value.trim();
+                    if (typeStr) payload.type = typeStr.split(',').map(function(value) { return value.trim(); }).filter(Boolean);
+                    else if (isEdit) payload.type = null;
+
+                    var refs = Array.from(document.querySelectorAll('.mf-pool-ref:checked')).map(function(input) { return input.value; });
+                    if (refs.length > 0) payload.endpoint_refs = refs;
+                    else if (isEdit) payload.endpoint_refs = null;
+
+                    var redirectRules = [];
+                    document.querySelectorAll('#redirect-rules-container .redirect-rule-row').forEach(function(group) {
                         var pre = group.querySelector('.rd-pre').value.trim();
                         var to = group.querySelector('.rd-to').value.trim();
-                        var weight = parseInt(group.querySelector('.rd-weight').value) || 1;
-                        if (pre && to) payload.redirects.push({ pre: pre, weight: weight, to: to });
+                        var weight = Number(group.querySelector('.rd-weight').value || 1);
+                        if (pre && to) redirectRules.push({ pre: pre, weight: weight, to: to });
                     });
-                    if (payload.redirects.length === 0) delete payload.redirects;
-                    var typeStr = document.getElementById('mf-type').value.trim();
-                    if (typeStr) payload.type = typeStr.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s; });
+                    if (redirectRules.length > 0) payload.redirects = redirectRules;
+                    else if (isEdit) payload.redirects = null;
+                    if (isEdit) payload.redirect_to = null;
+
+                    var headersValue = document.getElementById('mf-headers').value.trim();
+                    if (headersValue) {
+                        try { payload.headers = JSON.parse(headersValue); }
+                        catch (_) { showToast('Headers 必须是有效 JSON', 'warning'); return; }
+                    } else if (isEdit) payload.headers = null;
 
                     var btn = document.getElementById('btn-model-save');
                     btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 保存中...';
                     try {
-                        var res;
-                        if (isEdit) {
-                            res = await authFetch(API.MODELS + '/' + encodeURIComponent(existingModel.name), {
-                                method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-                            });
-                        } else {
-                            res = await authFetch(API.MODELS, {
-                                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-                            });
+                        var endpoint = isEdit ? API.MODELS + '/' + encodeURIComponent(existingModel.name) : API.MODELS;
+                        var res = await authFetch(endpoint, { method: isEdit ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                        if (!res.ok && res.status !== 201) {
+                            var errorBody = await res.json();
+                            throw new Error(errorBody.error || 'HTTP ' + res.status);
                         }
-                        if (res.ok || res.status === 201) {
-                            showToast(isEdit ? '模型已更新' : '模型已创建', 'success');
-                            closeModal();
-                            loadModels();
-                            loadStatus();
-                        } else { var e = await res.json(); showToast('操作失败: ' + (e.error || ''), 'error'); btn.disabled = false; btn.textContent = isEdit ? '保存修改' : '创建'; }
-                    } catch(e) { if (e.message !== 'Unauthorized') showToast('网络错误', 'error'); btn.disabled = false; btn.textContent = isEdit ? '保存修改' : '创建'; }
+                        showToast(isEdit ? '模型已更新' : '模型已创建', 'success');
+                        closeModal();
+                        selectedModelName = isEdit ? existingModel.name : name;
+                        loadModels();
+                        loadStatus();
+                        loadEndpointView();
+                    } catch (error) {
+                        if (error.message !== 'Unauthorized') showToast('操作失败: ' + error.message, 'error');
+                        btn.disabled = false; btn.textContent = isEdit ? '保存修改' : '创建模型';
+                    }
                 });
             }
 
-            function openAddEndpointForm(modelName) {
-                var body = '<div class="form-group"><label>Base URL <span style="color:var(--danger)">*</span></label>' +
-                    '<input type="text" id="aef-url" placeholder="https://api.example.com/v1"></div>' +
-                    '<div class="form-row"><div class="form-group"><label>权重</label><input type="number" id="aef-weight" value="1"></div>' +
-                    '<div class="form-group"><label>超时(秒)</label><input type="number" id="aef-timeout" placeholder="默认"></div></div>' +
-                    '<div class="form-row"><div class="form-group"><label>最大重试</label><input type="number" id="aef-retries" placeholder="默认"></div></div>';
-                var footer = '<button class="btn btn-outline" onclick="closeModal()">取消</button><button class="btn btn-primary" id="aef-save">添加</button>';
-                openModal('添加端点到 ' + escapeHtml(modelName), body, footer);
-                document.getElementById('aef-save').addEventListener('click', async function() {
-                    var url = document.getElementById('aef-url').value.trim();
+            function redirectRuleHtml(rule) {
+                return '<div class="input-group redirect-rule-row" style="margin-bottom:8px;">' +
+                    '<input type="text" class="rd-pre" placeholder="匹配模式，如 *" value="' + escapeHtml(rule ? rule.pre : '') + '">' +
+                    '<input type="text" class="rd-to" placeholder="目标模型" value="' + escapeHtml(rule ? rule.to : '') + '">' +
+                    '<input type="number" class="rd-weight" min="0" placeholder="权重" style="width:82px;" value="' + (rule && rule.weight !== undefined ? rule.weight : 1) + '">' +
+                    '<button class="icon-btn" type="button" title="移除规则" onclick="this.parentElement.remove()"><i data-lucide="x"></i></button></div>';
+            }
+
+            function setOptionalNumber(payload, field, inputId, includeNull) {
+                var raw = document.getElementById(inputId).value.trim();
+                if (raw !== '') payload[field] = Number(raw);
+                else if (includeNull) payload[field] = null;
+            }
+
+            function openEndpointForm(modelName, endpoint, poolMode) {
+                var isEdit = !!endpoint;
+                var prefix = poolMode ? '端点池' : '端点';
+                var body = '<div class="form-group"><label>Base URL <span style="color:var(--danger)">*</span></label><input type="url" id="ef-url" value="' + escapeHtml(endpoint ? endpoint.base_url : '') + '" placeholder="https://api.example.com/v1"></div>' +
+                    '<div class="form-row"><div class="form-group"><label>权重</label><input type="number" id="ef-weight" min="0.01" step="0.01" value="' + (endpoint && endpoint.weight !== undefined ? endpoint.weight : 1) + '"></div>' +
+                    '<div class="form-group"><label>超时 (秒)</label><input type="number" id="ef-timeout" min="1" value="' + (endpoint && endpoint.timeout !== undefined ? endpoint.timeout : '') + '" placeholder="继承默认值"></div>' +
+                    '<div class="form-group"><label>最大重试</label><input type="number" id="ef-retries" min="0" value="' + (endpoint && endpoint.max_retries !== undefined ? endpoint.max_retries : '') + '" placeholder="继承默认值"></div></div>';
+                var footer = '<button class="btn btn-outline" onclick="closeModal()">取消</button><button class="btn btn-primary" id="ef-save">' + (isEdit ? '保存修改' : '添加端点') + '</button>';
+                openModal((isEdit ? '编辑' : '添加') + prefix + (poolMode ? '' : ' · ' + escapeHtml(modelName)), body, footer);
+                document.getElementById('ef-save').addEventListener('click', async function() {
+                    var url = document.getElementById('ef-url').value.trim();
+                    var weight = Number(document.getElementById('ef-weight').value);
                     if (!url) { showToast('Base URL 不能为空', 'warning'); return; }
-                    var payload = { base_url: url, weight: parseInt(document.getElementById('aef-weight').value) || 1, timeout: parseInt(document.getElementById('aef-timeout').value) || undefined, max_retries: parseInt(document.getElementById('aef-retries').value) || undefined };
-                    var btn = document.getElementById('aef-save');
-                    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 添加中...';
-                    var r = await authFetch(API.MODELS + '/' + encodeURIComponent(modelName) + '/endpoints', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-                    });
-                    if (r.ok || r.status === 201) { showToast('端点已添加', 'success'); closeModal(); loadModelDetail(modelName); loadStatus(); }
-                    else { var e = await r.json(); showToast('添加失败: ' + (e.error || ''), 'error'); btn.disabled = false; btn.textContent = '添加'; }
+                    if (!Number.isFinite(weight) || weight <= 0) { showToast('权重必须大于 0', 'warning'); return; }
+                    var payload = { base_url: url, weight: weight };
+                    var timeoutRaw = document.getElementById('ef-timeout').value.trim();
+                    var retriesRaw = document.getElementById('ef-retries').value.trim();
+                    if (timeoutRaw) payload.timeout = Number(timeoutRaw); else if (isEdit) payload.timeout = null;
+                    if (retriesRaw) payload.max_retries = Number(retriesRaw); else if (isEdit) payload.max_retries = null;
+                    var btn = document.getElementById('ef-save');
+                    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 保存中...';
+                    var apiUrl = API.MODELS + '/' + encodeURIComponent(modelName) + '/endpoints' + (isEdit ? '/' + endpoint.index : '');
+                    try {
+                        var response = await authFetch(apiUrl, { method: isEdit ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                        if (!response.ok && response.status !== 201) { var errorBody = await response.json(); throw new Error(errorBody.error || 'HTTP ' + response.status); }
+                        showToast(isEdit ? '端点已更新' : '端点已添加', 'success');
+                        closeModal(); loadModelDetail(modelName); loadStatus(); loadEndpointView();
+                    } catch (error) {
+                        if (error.message !== 'Unauthorized') showToast('保存失败: ' + error.message, 'error');
+                        btn.disabled = false; btn.textContent = isEdit ? '保存修改' : '添加端点';
+                    }
                 });
             }
 
@@ -1014,9 +1067,7 @@ export function getAdminScriptResponse(): Response {
                 try {
                     var statusRes = await authFetch(API.STATUS);
                     var status = await statusRes.json();
-                    var modelRes = await authFetch(API.MODELS);
-                    var models = await modelRes.json();
-                    renderEndpointView(status, models);
+                    renderEndpointView(status);
                 } catch (e) {
                     if (e.message !== 'Unauthorized') {
                         document.getElementById('endpoint-list').innerHTML = '<div class="empty-state"><div class="ico">❌</div><p>加载失败</p></div>';
@@ -1024,7 +1075,7 @@ export function getAdminScriptResponse(): Response {
                 }
             }
 
-            function renderEndpointView(statusData, models) {
+            function renderEndpointView(statusData) {
                 var container = document.getElementById('endpoint-list');
                 var filterModel = document.getElementById('ep-filter-model').value;
                 var filterStatus = document.getElementById('ep-filter-status').value;
@@ -1034,10 +1085,10 @@ export function getAdminScriptResponse(): Response {
                 for (var modelKey in statusData) {
                     if (modelKey === '_summary') continue;
                     var pattern = extractModelPattern(modelKey);
-                    modelNames.add(pattern);
                     var eps = statusData[modelKey] || [];
                     eps.forEach(function(ep) {
                         if (!ep.base_url) return;
+                        modelNames.add(pattern);
                         allEndpoints.push({ model: pattern, modelKey: modelKey, baseUrl: ep.base_url, keys: ep.keys || {}, weight: ep.weight });
                     });
                 }
@@ -1063,14 +1114,14 @@ export function getAdminScriptResponse(): Response {
                 else if (filterStatus === 'down') filtered = filtered.filter(function(ep) { return ep.keys.active === 0; });
 
                 if (!filtered || filtered.length === 0) {
-                    document.getElementById('endpoint-filter-summary').textContent = '0 个实际端点';
+                    document.getElementById('endpoint-filter-summary').textContent = '0 条模型-端点绑定';
                     container.innerHTML = '<div class="empty-state"><i data-lucide="server-off"></i><p>当前筛选条件下没有实际转发端点</p></div>';
                     refreshIcons();
                     return;
                 }
 
                 var availableCount = filtered.filter(function(ep) { return (ep.keys.active || 0) > 0; }).length;
-                document.getElementById('endpoint-filter-summary').textContent = availableCount + ' / ' + filtered.length + ' 个端点可用';
+                document.getElementById('endpoint-filter-summary').textContent = availableCount + ' / ' + filtered.length + ' 条模型-端点绑定可用';
                 var html = '<table class="endpoint-data-table"><thead><tr><th></th><th>模型</th><th>Base URL</th><th>Key 状态</th><th>健康度</th><th>权重</th></tr></thead><tbody>';
                 filtered.forEach(function(ep, index) {
                     var total = ep.keys.total || 0;
@@ -1115,6 +1166,182 @@ export function getAdminScriptResponse(): Response {
                     });
                 });
                 refreshIcons();
+            }
+
+            function switchEndpointView(view) {
+                var poolView = view === 'pool';
+                document.getElementById('endpoint-runtime-view').hidden = poolView;
+                document.getElementById('endpoint-pool-view').hidden = !poolView;
+                document.querySelectorAll('#endpoint-view-tabs button').forEach(function(button) {
+                    button.classList.toggle('active', button.dataset.endpointView === view);
+                });
+                document.getElementById('btn-create-pool').style.display = poolView ? '' : 'none';
+                if (poolView) loadEndpointPools(); else loadEndpointView();
+                refreshIcons();
+            }
+
+            async function loadEndpointPools() {
+                var container = document.getElementById('endpoint-pool-list');
+                try {
+                    var response = await authFetch(API.POOL);
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    var pools = await response.json();
+                    renderEndpointPools(pools);
+                } catch (error) {
+                    if (error.message !== 'Unauthorized') {
+                        container.innerHTML = '<div class="empty-state"><i data-lucide="circle-alert"></i><p>端点池加载失败</p></div>';
+                        refreshIcons();
+                    }
+                }
+            }
+
+            function renderEndpointPools(pools) {
+                var container = document.getElementById('endpoint-pool-list');
+                var summary = document.getElementById('endpoint-pool-summary');
+                if (!pools || pools.length === 0) {
+                    summary.textContent = '0 个端点池';
+                    container.innerHTML = '<div class="empty-state"><i data-lucide="database-zap"></i><p>尚未创建共享端点池</p><button class="btn btn-primary" id="empty-create-pool"><i data-lucide="plus"></i>创建端点池</button></div>';
+                    document.getElementById('empty-create-pool').addEventListener('click', function() { openEndpointPoolForm(null); });
+                    refreshIcons();
+                    return;
+                }
+                var totalKeys = pools.reduce(function(sum, pool) { return sum + (pool.key_count || 0); }, 0);
+                var totalRefs = pools.reduce(function(sum, pool) { return sum + (pool.referenced_by ? pool.referenced_by.length : 0); }, 0);
+                summary.textContent = pools.length + ' 个池 · ' + totalKeys + ' Keys · ' + totalRefs + ' 个模型引用';
+                var html = '<table class="pool-data-table"><thead><tr><th></th><th>端点池</th><th>Base URL</th><th>Key 状态</th><th>引用模型</th><th>操作</th></tr></thead><tbody>';
+                pools.forEach(function(pool, index) {
+                    var runtime = pool.runtime || { active: 0, total: 0, cooldown: 0 };
+                    var active = runtime.active || 0;
+                    var configured = pool.key_count || 0;
+                    var refs = pool.referenced_by || [];
+                    var mounted = refs.length > 0;
+                    var stateClass = !mounted ? 'badge-gray' : (active > 0 ? (active < configured ? 'badge-yellow' : 'badge-green') : 'badge-red');
+                    var keyStateText = !mounted ? '未挂载 · ' + configured + ' Keys' : active + ' / ' + configured + ' 有效';
+                    html += '<tr class="endpoint-main-row pool-main-row" data-detail="pool-detail-' + index + '" data-pool="' + escapeHtml(pool.name) + '">' +
+                        '<td><button class="endpoint-toggle" title="展开 Key 管理" aria-label="展开 Key 管理"><i data-lucide="chevron-right"></i></button></td>' +
+                        '<td><span class="pool-name">' + escapeHtml(pool.name) + '</span><div class="table-subtext">权重 ' + (pool.weight || 1) + (pool.timeout ? ' · ' + pool.timeout + 's' : '') + '</div></td>' +
+                        '<td class="endpoint-url-cell" title="' + escapeHtml(pool.base_url) + '">' + escapeHtml(pool.base_url) + '</td>' +
+                        '<td><span class="badge ' + stateClass + '">' + keyStateText + '</span></td>' +
+                        '<td><div class="pool-reference-list">' + (refs.length ? refs.slice(0, 3).map(function(name) { return '<span class="badge badge-gray">' + escapeHtml(name) + '</span>'; }).join('') : '<span class="table-subtext">未被引用</span>') + (refs.length > 3 ? '<span class="badge badge-gray">+' + (refs.length - 3) + '</span>' : '') + '</div></td>' +
+                        '<td><div class="pool-actions"><button class="icon-btn edit-pool-btn" data-pool-index="' + index + '" title="编辑端点池" aria-label="编辑端点池"><i data-lucide="pencil"></i></button><button class="icon-btn delete-pool-btn" data-pool-index="' + index + '" title="删除端点池" aria-label="删除端点池"><i data-lucide="trash-2"></i></button></div></td></tr>' +
+                        '<tr class="pool-detail-row" id="pool-detail-' + index + '" hidden><td colspan="6"><div class="pool-detail-shell"><div class="pool-key-list" id="pool-key-list-' + index + '"><div class="muted-cell">展开后加载 Key 状态</div></div><div class="pool-key-add"><label>添加 API Key</label><div class="input-group"><input type="password" id="pool-key-new-' + index + '" placeholder="输入新的 Key" autocomplete="off"><button class="btn btn-primary add-pool-key-inline" data-pool-index="' + index + '">添加</button></div><div class="help">Key 保存后仅显示脱敏预览。</div></div></div></td></tr>';
+                });
+                html += '</tbody></table>';
+                container.innerHTML = html;
+
+                container.querySelectorAll('.pool-main-row').forEach(function(row) {
+                    row.addEventListener('click', function(event) {
+                        if (event.target.closest('.pool-actions')) return;
+                        var detail = document.getElementById(row.dataset.detail);
+                        var opening = detail.hidden;
+                        detail.hidden = !opening;
+                        row.classList.toggle('expanded', opening);
+                        if (opening) loadPoolDetail(row.dataset.pool, parseInt(row.dataset.detail.split('-').pop()));
+                    });
+                });
+                container.querySelectorAll('.edit-pool-btn').forEach(function(button) {
+                    button.addEventListener('click', function() { openEndpointPoolForm(pools[parseInt(button.dataset.poolIndex)]); });
+                });
+                container.querySelectorAll('.delete-pool-btn').forEach(function(button) {
+                    button.addEventListener('click', async function() {
+                        var pool = pools[parseInt(button.dataset.poolIndex)];
+                        var refs = pool.referenced_by || [];
+                        if (refs.length > 0) {
+                            showToast('请先从模型中移除该端点池引用: ' + refs.join(', '), 'warning', 5000);
+                            return;
+                        }
+                        var confirmed = await confirmAction('确认删除端点池 <strong>' + escapeHtml(pool.name) + '</strong>？', '删除端点池', true);
+                        if (!confirmed) return;
+                        var response = await authFetch(API.POOL + '/' + encodeURIComponent(pool.name), { method: 'DELETE' });
+                        if (response.ok || response.status === 204) { showToast('端点池已删除', 'success'); loadEndpointPools(); loadStatus(); }
+                        else { var errorBody = await response.json(); showToast('删除失败: ' + (errorBody.error || ''), 'error'); }
+                    });
+                });
+                container.querySelectorAll('.add-pool-key-inline').forEach(function(button) {
+                    button.addEventListener('click', async function() {
+                        var index = parseInt(button.dataset.poolIndex);
+                        var pool = pools[index];
+                        var input = document.getElementById('pool-key-new-' + index);
+                        var key = input.value.trim();
+                        if (!key) { showToast('请输入 Key', 'warning'); return; }
+                        button.disabled = true;
+                        var response = await authFetch(API.POOL + '/' + encodeURIComponent(pool.name) + '/keys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: key }) });
+                        button.disabled = false;
+                        if (response.ok || response.status === 201) { input.value = ''; showToast('Key 已添加', 'success'); loadEndpointPools(); loadStatus(); }
+                        else { var errorBody = await response.json(); showToast('添加失败: ' + (errorBody.error || ''), 'error'); }
+                    });
+                });
+                refreshIcons();
+            }
+
+            async function loadPoolDetail(poolName, index) {
+                var container = document.getElementById('pool-key-list-' + index);
+                if (!container) return;
+                container.innerHTML = '<div class="muted-cell">正在加载 Key 状态...</div>';
+                try {
+                    var response = await authFetch(API.POOL + '/' + encodeURIComponent(poolName));
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    var pool = await response.json();
+                    if (!pool.keys || pool.keys.length === 0) {
+                        container.innerHTML = '<div class="muted-cell">暂无 Key</div>';
+                        return;
+                    }
+                    container.innerHTML = pool.keys.map(function(key) {
+                        var mounted = pool.referenced_by && pool.referenced_by.length > 0;
+                        var statusClass = !mounted ? 'badge-gray' : (key.active ? 'badge-green' : (key.cooldown ? 'badge-yellow' : 'badge-red'));
+                        var statusText = !mounted ? '未挂载' : (key.active ? '有效' : (key.cooldown ? '冷却' : '不可用'));
+                        var dotClass = !mounted ? 'dot-gray' : (key.active ? 'dot-green' : key.cooldown ? 'dot-yellow' : 'dot-red');
+                        return '<div class="key-row"><span class="status-dot-sm ' + dotClass + '"></span><span class="key-val">' + escapeHtml(key.key_preview) + '</span><span class="badge ' + statusClass + '">' + statusText + '</span><button class="icon-btn delete-pool-key-inline" data-key-index="' + key.index + '" title="删除 Key" aria-label="删除 Key"><i data-lucide="trash-2"></i></button></div>';
+                    }).join('');
+                    container.querySelectorAll('.delete-pool-key-inline').forEach(function(button) {
+                        button.addEventListener('click', async function() {
+                            var confirmed = await confirmAction('确认删除此 Key？', '删除 Key', true);
+                            if (!confirmed) return;
+                            var result = await authFetch(API.POOL + '/' + encodeURIComponent(poolName) + '/keys/' + button.dataset.keyIndex, { method: 'DELETE' });
+                            if (result.ok || result.status === 204) { showToast('Key 已删除', 'success'); loadEndpointPools(); loadStatus(); }
+                            else { var errorBody = await result.json(); showToast('删除失败: ' + (errorBody.error || ''), 'error'); }
+                        });
+                    });
+                    refreshIcons();
+                } catch (error) {
+                    if (error.message !== 'Unauthorized') container.innerHTML = '<div class="muted-cell">Key 状态加载失败</div>';
+                }
+            }
+
+            function openEndpointPoolForm(pool) {
+                var isEdit = !!pool;
+                var body = '<div class="form-group"><label>端点池名称 <span style="color:var(--danger)">*</span></label><input type="text" id="pf-name" value="' + escapeHtml(pool ? pool.name : '') + '"' + (isEdit ? ' readonly' : '') + ' placeholder="例如 primary-openai"></div>' +
+                    '<div class="form-group"><label>Base URL <span style="color:var(--danger)">*</span></label><input type="url" id="pf-url" value="' + escapeHtml(pool ? pool.base_url : '') + '" placeholder="https://api.example.com/v1"></div>' +
+                    '<div class="form-row"><div class="form-group"><label>权重</label><input type="number" id="pf-weight" min="0.01" step="0.01" value="' + (pool && pool.weight !== undefined ? pool.weight : 1) + '"></div>' +
+                    '<div class="form-group"><label>超时 (秒)</label><input type="number" id="pf-timeout" min="1" value="' + (pool && pool.timeout !== undefined ? pool.timeout : '') + '" placeholder="使用模型默认值"></div>' +
+                    '<div class="form-group"><label>最大重试</label><input type="number" id="pf-retries" min="0" value="' + (pool && pool.max_retries !== undefined ? pool.max_retries : '') + '" placeholder="使用模型默认值"></div></div>' +
+                    (isEdit && pool.referenced_by && pool.referenced_by.length ? '<div class="form-group"><label>当前引用</label><div class="pool-reference-list">' + pool.referenced_by.map(function(name) { return '<span class="badge badge-gray">' + escapeHtml(name) + '</span>'; }).join('') + '</div></div>' : '');
+                var footer = '<button class="btn btn-outline" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pf-save">' + (isEdit ? '保存修改' : '创建端点池') + '</button>';
+                openModal(isEdit ? '编辑端点池' : '创建端点池', body, footer);
+                document.getElementById('pf-save').addEventListener('click', async function() {
+                    var name = document.getElementById('pf-name').value.trim();
+                    var url = document.getElementById('pf-url').value.trim();
+                    var weight = Number(document.getElementById('pf-weight').value);
+                    if (!name || !url) { showToast('名称和 Base URL 不能为空', 'warning'); return; }
+                    if (!Number.isFinite(weight) || weight <= 0) { showToast('权重必须大于 0', 'warning'); return; }
+                    var payload = { name: name, base_url: url, weight: weight };
+                    var timeoutRaw = document.getElementById('pf-timeout').value.trim();
+                    var retriesRaw = document.getElementById('pf-retries').value.trim();
+                    if (timeoutRaw) payload.timeout = Number(timeoutRaw); else if (isEdit) payload.timeout = null;
+                    if (retriesRaw) payload.max_retries = Number(retriesRaw); else if (isEdit) payload.max_retries = null;
+                    var button = document.getElementById('pf-save');
+                    button.disabled = true; button.innerHTML = '<span class="spinner"></span> 保存中...';
+                    try {
+                        var apiUrl = isEdit ? API.POOL + '/' + encodeURIComponent(pool.name) : API.POOL;
+                        var response = await authFetch(apiUrl, { method: isEdit ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                        if (!response.ok && response.status !== 201) { var errorBody = await response.json(); throw new Error(errorBody.error || 'HTTP ' + response.status); }
+                        showToast(isEdit ? '端点池已更新' : '端点池已创建', 'success');
+                        closeModal(); loadEndpointPools(); loadModels(); loadStatus();
+                    } catch (error) {
+                        if (error.message !== 'Unauthorized') showToast('保存失败: ' + error.message, 'error');
+                        button.disabled = false; button.textContent = isEdit ? '保存修改' : '创建端点池';
+                    }
+                });
             }
 
             // ======================== Token 统计 ========================
@@ -1423,7 +1650,15 @@ export function getAdminScriptResponse(): Response {
                 if (autoRefreshEnabled) stopAutoRefresh(); else startAutoRefresh();
             });
             document.getElementById('btn-refresh').addEventListener('click', function() { loadStatus(); loadDashboardSummary(); });
-            document.getElementById('btn-ep-refresh').addEventListener('click', function() { loadEndpointView(); });
+            document.getElementById('btn-ep-refresh').addEventListener('click', function() {
+                var activeEndpointView = document.querySelector('#endpoint-view-tabs button.active');
+                if (activeEndpointView && activeEndpointView.dataset.endpointView === 'pool') loadEndpointPools();
+                else loadEndpointView();
+            });
+            document.querySelectorAll('#endpoint-view-tabs button').forEach(function(button) {
+                button.addEventListener('click', function() { switchEndpointView(button.dataset.endpointView); });
+            });
+            document.getElementById('btn-create-pool').addEventListener('click', function() { openEndpointPoolForm(null); });
             document.getElementById('btn-log-pause').addEventListener('click', function() {
                 requestLogPaused = !requestLogPaused;
                 this.innerHTML = requestLogPaused ? '<i data-lucide="play"></i>' : '<i data-lucide="pause"></i>';
@@ -1455,7 +1690,7 @@ export function getAdminScriptResponse(): Response {
             });
 
             document.getElementById('btn-create-model').addEventListener('click', function() {
-                openModelForm(null, []);
+                openModelForm(null);
             });
 
             // ======================== 初始化 ========================
@@ -1465,7 +1700,7 @@ export function getAdminScriptResponse(): Response {
                 loadStatus();
                 loadDashboardSummary();
                 loadModels();
-                if (savedPage === 'endpoints') { setTimeout(function() { loadEndpointView(); }, 200); }
+                if (savedPage === 'endpoints') { setTimeout(function() { switchEndpointView('runtime'); }, 200); }
                 if (savedPage === 'token') { setTimeout(function() { loadTokenCharts(); }, 200); }
                 if (savedPage === 'config') { setTimeout(function() { initCodeMirror(); loadConfigToEditor(); }, 200); }
                 startAutoRefresh();

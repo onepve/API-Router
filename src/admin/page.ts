@@ -162,17 +162,35 @@ export function getAdminPageResponse(): Response {
             <div class="page" id="page-endpoints">
                 <section class="workspace" id="endpoint-workspace">
                     <header class="workspace-header">
-                        <div><span class="eyebrow">UPSTREAM HEALTH</span><h2>端点可用性</h2><p>仅统计实际转发端点；纯转发规则不进入健康度计算。</p></div>
-                        <button class="icon-btn" id="btn-ep-refresh" title="刷新端点" aria-label="刷新端点"><i data-lucide="refresh-cw"></i></button>
-                    </header>
-                    <div class="workspace-panel">
-                        <div class="data-toolbar">
-                            <div class="filter-control"><label for="ep-filter-model">模型</label><select id="ep-filter-model"><option value="all">全部模型</option></select></div>
-                            <div class="filter-control"><label for="ep-filter-status">状态</label><select id="ep-filter-status"><option value="all">全部状态</option><option value="healthy">健康</option><option value="warning">部分可用</option><option value="down">不可用</option></select></div>
-                            <div class="data-toolbar-summary" id="endpoint-filter-summary">等待端点数据</div>
+                        <div><span class="eyebrow">UPSTREAM OPERATIONS</span><h2>端点与端点池</h2><p>查看实际转发健康度，并在线维护共享端点池、引用关系和 Key。</p></div>
+                        <div class="workspace-actions">
+                            <button class="btn btn-primary" id="btn-create-pool" style="display:none;"><i data-lucide="plus"></i>新建端点池</button>
+                            <button class="icon-btn" id="btn-ep-refresh" title="刷新端点" aria-label="刷新端点"><i data-lucide="refresh-cw"></i></button>
                         </div>
-                        <div class="endpoint-table" id="endpoint-table">
-                            <div id="endpoint-list"><div class="empty-state"><i data-lucide="loader-circle"></i><p>正在加载端点</p></div></div>
+                    </header>
+                    <div class="view-tabs" id="endpoint-view-tabs">
+                        <button class="active" data-endpoint-view="runtime"><i data-lucide="activity"></i>运行端点</button>
+                        <button data-endpoint-view="pool"><i data-lucide="database"></i>共享端点池</button>
+                    </div>
+                    <div id="endpoint-runtime-view">
+                        <div class="workspace-panel">
+                            <div class="data-toolbar">
+                                <div class="filter-control"><label for="ep-filter-model">模型</label><select id="ep-filter-model"><option value="all">全部模型</option></select></div>
+                                <div class="filter-control"><label for="ep-filter-status">状态</label><select id="ep-filter-status"><option value="all">全部状态</option><option value="healthy">健康</option><option value="warning">部分可用</option><option value="down">不可用</option></select></div>
+                                <div class="data-toolbar-summary" id="endpoint-filter-summary">等待端点数据</div>
+                            </div>
+                            <div class="endpoint-table" id="endpoint-table">
+                                <div id="endpoint-list"><div class="empty-state"><i data-lucide="loader-circle"></i><p>正在加载端点</p></div></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="endpoint-pool-view" hidden>
+                        <div class="workspace-panel">
+                            <div class="data-toolbar pool-toolbar">
+                                <div><strong>共享端点池</strong><span>一个池可被多个模型复用，Key 状态实时同步。</span></div>
+                                <div class="data-toolbar-summary" id="endpoint-pool-summary">等待端点池数据</div>
+                            </div>
+                            <div id="endpoint-pool-list"><div class="empty-state"><i data-lucide="loader-circle"></i><p>正在加载端点池</p></div></div>
                         </div>
                     </div>
                 </section>

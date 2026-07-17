@@ -95,6 +95,14 @@ function validateEndpointConfig(endpoint: unknown, label: string): string | null
     if (!ep.base_url || typeof ep.base_url !== "string") {
         return `${label} base_url 不能为空`;
     }
+    try {
+        const url = new URL(ep.base_url);
+        if (url.protocol !== "http:" && url.protocol !== "https:") {
+            return `${label} base_url 必须使用 http 或 https`;
+        }
+    } catch (_) {
+        return `${label} base_url 必须是有效 URL`;
+    }
     if (!Array.isArray(ep.keys) || ep.keys.some(key => typeof key !== "string")) {
         return `${label} keys 必须是字符串数组`;
     }
@@ -107,6 +115,26 @@ function validateEndpointConfig(endpoint: unknown, label: string): string | null
     if (ep.max_retries !== undefined &&
         (typeof ep.max_retries !== "number" || !Number.isFinite(ep.max_retries) || ep.max_retries < 0)) {
         return `${label} max_retries 必须是非负数`;
+    }
+    return null;
+}
+
+function validateHeaderPolicy(policy: unknown, label: string): string | null {
+    if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
+        return `${label} 必须是对象`;
+    }
+    const headers = policy as Record<string, unknown>;
+    if (headers.set !== undefined) {
+        if (!headers.set || typeof headers.set !== "object" || Array.isArray(headers.set)) {
+            return `${label}.set 必须是字符串映射`;
+        }
+        for (const [name, value] of Object.entries(headers.set as Record<string, unknown>)) {
+            if (!name.trim() || typeof value !== "string") return `${label}.set 必须是字符串映射`;
+        }
+    }
+    if (headers.delete !== undefined &&
+        (!Array.isArray(headers.delete) || headers.delete.some(name => typeof name !== "string" || !name.trim()))) {
+        return `${label}.delete 必须是非空字符串数组`;
     }
     return null;
 }
@@ -168,6 +196,10 @@ export function validateModelConfig(model: Partial<ModelConfig>): string | null 
             }
         }
     }
+    if (model.headers !== undefined) {
+        const error = validateHeaderPolicy(model.headers, "headers");
+        if (error) return error;
+    }
     return null;
 }
 
@@ -187,13 +219,28 @@ export function validateRouterConfig(config: Partial<RouterConfig>): string | nu
         (!Array.isArray(config.auth_key) || config.auth_key.some(key => typeof key !== "string" || key.trim() === ""))) {
         return "auth_key 必须是非空字符串数组";
     }
+    if (config.headers !== undefined) {
+        const error = validateHeaderPolicy(config.headers, "全局 headers");
+        if (error) return error;
+    }
     if (config.endpoint_pool !== undefined) {
         if (!config.endpoint_pool || typeof config.endpoint_pool !== "object" || Array.isArray(config.endpoint_pool)) {
             return "endpoint_pool 必须是对象";
         }
         for (const [name, endpoint] of Object.entries(config.endpoint_pool)) {
+            if (!name.trim() || name.includes("/")) return `端点池名称 '${name}' 无效`;
             const error = validateEndpointConfig(endpoint, `端点池 '${name}'`);
             if (error) return error;
+        }
+    }
+    const endpointPool = config.endpoint_pool || {};
+    for (const model of config.models) {
+        if (!model.endpoint_refs) continue;
+        const seenRefs = new Set<string>();
+        for (const ref of model.endpoint_refs) {
+            if (seenRefs.has(ref)) return `${model.name}: endpoint_refs 包含重复引用 '${ref}'`;
+            seenRefs.add(ref);
+            if (!endpointPool[ref]) return `${model.name}: 引用了不存在的端点池 '${ref}'`;
         }
     }
     return null;
