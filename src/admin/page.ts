@@ -135,91 +135,107 @@ export function getAdminPageResponse(): Response {
             <!-- 页面 2: 模型管理（左右分栏） -->
             <!-- ================================================================ -->
             <div class="page" id="page-models">
-                <div class="split-view">
-                    <div class="split-left">
-                        <div class="card" style="padding:12px;">
-                            <input type="text" class="filter-input" id="model-filter" placeholder="🔍 搜索模型..." style="max-width:100%;margin-bottom:10px;">
-                            <div id="model-list" style="max-height:calc(100vh - 200px);overflow-y:auto;"></div>
-                            <button class="btn btn-primary btn-sm" id="btn-create-model" style="width:100%;margin-top:10px;">➕ 新建模型</button>
-                        </div>
+                <section class="workspace model-workspace" id="model-workspace">
+                    <header class="workspace-header">
+                        <div><span class="eyebrow">ROUTING CATALOG</span><h2>模型与路由规则</h2><p>集中维护匹配规则、转发端点、重定向和 Key。</p></div>
+                        <button class="btn btn-primary" id="btn-create-model"><i data-lucide="plus"></i>新建模型</button>
+                    </header>
+                    <div class="model-master-detail">
+                        <aside class="workspace-panel model-list-panel" id="model-list-panel">
+                            <div class="panel-tools">
+                                <div class="search-control"><i data-lucide="search"></i><input type="search" id="model-filter" placeholder="搜索模型"></div>
+                            </div>
+                            <div class="model-list-scroll" id="model-list"></div>
+                        </aside>
+                        <section class="workspace-panel model-detail-panel" id="model-detail-panel">
+                            <div id="model-detail">
+                                <div class="empty-state"><i data-lucide="mouse-pointer-click"></i><p>选择模型查看路由详情</p></div>
+                            </div>
+                        </section>
                     </div>
-                    <div class="split-right">
-                        <div id="model-detail">
-                            <div class="empty-state"><div class="ico">👈</div><p>选择一个模型查看详情</p></div>
-                        </div>
-                    </div>
-                </div>
+                </section>
             </div>
 
             <!-- ================================================================ -->
             <!-- 页面 3: 端点管理（端点维度） -->
             <!-- ================================================================ -->
             <div class="page" id="page-endpoints">
-                <div class="toolbar">
-                    <div class="toolbar-left">
-                        <select id="ep-filter-model" style="max-width:200px;">
-                            <option value="all">📊 全部模型</option>
-                        </select>
-                        <select id="ep-filter-status" style="max-width:140px;">
-                            <option value="all">全部状态</option>
-                            <option value="healthy">✓ 健康</option>
-                            <option value="warning">⚠️ 警告</option>
-                            <option value="down">✗ 不可用</option>
-                        </select>
+                <section class="workspace" id="endpoint-workspace">
+                    <header class="workspace-header">
+                        <div><span class="eyebrow">UPSTREAM HEALTH</span><h2>端点可用性</h2><p>仅统计实际转发端点；纯转发规则不进入健康度计算。</p></div>
+                        <button class="icon-btn" id="btn-ep-refresh" title="刷新端点" aria-label="刷新端点"><i data-lucide="refresh-cw"></i></button>
+                    </header>
+                    <div class="workspace-panel">
+                        <div class="data-toolbar">
+                            <div class="filter-control"><label for="ep-filter-model">模型</label><select id="ep-filter-model"><option value="all">全部模型</option></select></div>
+                            <div class="filter-control"><label for="ep-filter-status">状态</label><select id="ep-filter-status"><option value="all">全部状态</option><option value="healthy">健康</option><option value="warning">部分可用</option><option value="down">不可用</option></select></div>
+                            <div class="data-toolbar-summary" id="endpoint-filter-summary">等待端点数据</div>
+                        </div>
+                        <div class="endpoint-table" id="endpoint-table">
+                            <div id="endpoint-list"><div class="empty-state"><i data-lucide="loader-circle"></i><p>正在加载端点</p></div></div>
+                        </div>
                     </div>
-                    <div class="toolbar-right">
-                        <button class="btn btn-sm btn-ghost" id="btn-ep-refresh" title="刷新">🔄</button>
-                    </div>
-                </div>
-                <div id="endpoint-list"></div>
+                </section>
             </div>
 
             <!-- ================================================================ -->
             <!-- 页面 4: Token 统计 -->
             <!-- ================================================================ -->
             <div class="page" id="page-token">
-                <div class="toolbar">
-                    <div class="toolbar-left">
-                        <select id="token-model" style="max-width:220px;">
-                            <option value="all">📊 全部模型</option>
-                        </select>
-                        <div class="btn-group" id="token-range-group">
-                            <button class="active" data-range="1h">1 小时</button>
-                            <button data-range="5h">5 小时</button>
-                            <button data-range="1d">1 天</button>
-                            <button data-range="7d">7 天</button>
-                            <button data-range="30d">30 天</button>
+                <section class="workspace token-workspace" id="token-workspace">
+                    <header class="workspace-header token-header">
+                        <div><span class="eyebrow">USAGE & SPEND</span><h2>Token 与成本</h2><p>按统一时间范围查看用量、请求速率、模型占比和预估费用。</p></div>
+                        <div class="token-controls">
+                            <select id="token-model"><option value="all">全部模型</option></select>
+                            <div class="btn-group" id="token-range-group" aria-label="统计范围">
+                                <button class="active" data-range="1h">1 小时</button>
+                                <button data-range="5h">5 小时</button>
+                                <button data-range="1d">1 天</button>
+                                <button data-range="7d">7 天</button>
+                                <button data-range="30d">30 天</button>
+                            </div>
                         </div>
+                    </header>
+                    <div class="token-overview" id="token-overview"><div id="token-summary-cards"></div></div>
+                    <div class="token-analysis-grid">
+                        <section class="workspace-panel token-trend-panel" id="token-trend-panel">
+                            <div class="panel-heading"><div><span class="panel-kicker">TOKEN VOLUME</span><h3>Token 消耗趋势</h3></div><span class="panel-note" id="token-range-label">最近 1 小时</span></div>
+                            <div id="chart-bar" class="analysis-chart chart-wide"></div>
+                        </section>
+                        <section class="workspace-panel">
+                            <div class="panel-heading"><div><span class="panel-kicker">MODEL SHARE</span><h3>模型消耗占比</h3></div></div>
+                            <div id="chart-pie" class="analysis-chart"></div>
+                        </section>
+                        <section class="workspace-panel">
+                            <div class="panel-heading"><div><span class="panel-kicker">REQUEST RATE</span><h3>请求数趋势</h3></div></div>
+                            <div id="chart-line" class="analysis-chart"></div>
+                        </section>
                     </div>
-                </div>
-                <div class="stat-grid" id="token-summary-cards"></div>
-                <div class="card"><div class="card-title" style="font-size:0.9rem;margin-bottom:8px;">📊 Token 消耗趋势</div><div id="chart-bar" style="width:100%;height:280px;"></div></div>
-                <div class="card"><div class="card-title" style="font-size:0.9rem;margin-bottom:8px;">📈 请求数趋势</div><div id="chart-line" style="width:100%;height:280px;"></div></div>
-                <div class="card"><div class="card-title" style="font-size:0.9rem;margin-bottom:8px;">🥧 各模型消耗占比</div><div id="chart-pie" style="width:100%;height:280px;"></div></div>
-                <div class="card">
-                    <div class="card-title" style="font-size:0.9rem;margin-bottom:8px;">💵 模型定价 & 成本明细</div>
-                    <div class="table-wrap" id="pricing-table-container">
-                        <p style="color:var(--text-muted);font-size:0.82rem;">加载中...</p>
-                    </div>
-                </div>
+                    <section class="workspace-panel cost-breakdown-panel" id="cost-breakdown-panel">
+                        <div class="panel-heading"><div><span class="panel-kicker">COST BREAKDOWN</span><h3>模型定价与成本明细</h3></div><span class="panel-note">USD，按模型目录估算</span></div>
+                        <div class="table-wrap" id="pricing-table-container"><p class="muted-cell">加载中...</p></div>
+                    </section>
+                </section>
             </div>
 
             <!-- ================================================================ -->
             <!-- 页面 5: 配置编辑 -->
             <!-- ================================================================ -->
             <div class="page" id="page-config">
-                <div class="card">
-                    <div class="card-header">
-                        <div class="card-title">⚙️ 编辑配置文件 (config.yaml)</div>
-                        <div style="display:flex;gap:8px;">
-                            <button class="btn btn-sm btn-outline" id="btn-load-config">📥 加载</button>
-                            <button class="btn btn-sm btn-outline" id="btn-download-config">⬇️ 下载</button>
-                            <button class="btn btn-sm btn-primary" id="btn-save-config">💾 保存</button>
+                <section class="workspace config-workspace" id="config-workspace">
+                    <header class="workspace-header">
+                        <div><span class="eyebrow">ROUTER CONFIGURATION</span><h2>配置文件</h2><p>编辑并校验当前 config.yaml，保存后立即重新加载路由。</p></div>
+                        <div class="workspace-actions">
+                            <button class="btn btn-outline" id="btn-load-config"><i data-lucide="rotate-ccw"></i>重新加载</button>
+                            <button class="icon-btn" id="btn-download-config" title="下载配置" aria-label="下载配置"><i data-lucide="download"></i></button>
+                            <button class="btn btn-primary" id="btn-save-config"><i data-lucide="save"></i>保存配置</button>
                         </div>
-                    </div>
-                    <textarea id="config-editor"></textarea>
-                    <div id="config-status" style="margin-top:12px;"></div>
-                </div>
+                    </header>
+                    <section class="workspace-panel config-editor-panel" id="config-editor-panel">
+                        <div class="config-editor-bar"><span class="config-file-name">config.yaml</span><div id="config-status">尚未加载</div></div>
+                        <textarea id="config-editor"></textarea>
+                    </section>
+                </section>
             </div>
 
         </div>

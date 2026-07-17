@@ -593,9 +593,9 @@ export function getAdminScriptResponse(): Response {
                     var active = selectedModelName === m.name ? 'active' : '';
                     var matchType = getMatchType(m.name);
                     var matchBadge = matchType === '精确' ? 'badge-blue' : (matchType === '前缀' ? 'badge-teal' : 'badge-yellow');
-                    var refBadge = m.has_refs ? '<span class="badge badge-teal">🔗' + (m.endpoint_ref_count || 0) + '</span>' : '';
+                    var refBadge = m.has_refs ? '<span class="badge badge-teal">池 ' + (m.endpoint_ref_count || 0) + '</span>' : '';
                     return '<div class="model-list-item ' + active + '" data-name="' + escapeHtml(m.name) + '">' +
-                        '<span class="ml-name">📦 ' + escapeHtml(m.name) + '</span>' +
+                        '<span class="ml-name">' + escapeHtml(m.name) + '</span>' +
                         '<span class="ml-badges">' +
                         '<span class="badge ' + matchBadge + '">' + matchType + '</span>' +
                         refBadge +
@@ -646,12 +646,12 @@ export function getAdminScriptResponse(): Response {
                 var name = model.name;
                 var matchType = getMatchType(name);
                 var matchBadge = matchType === '精确' ? 'badge-blue' : (matchType === '前缀' ? 'badge-teal' : 'badge-yellow');
-                var html = '<div class="card">' +
+                var html = '<div class="model-detail-content">' +
                     '<div class="card-header">' +
-                    '<div class="card-title">📦 ' + escapeHtml(name) + ' <span class="badge ' + matchBadge + '">' + matchType + '</span></div>' +
+                    '<div class="card-title"><i data-lucide="box"></i>' + escapeHtml(name) + ' <span class="badge ' + matchBadge + '">' + matchType + '</span></div>' +
                     '<div style="display:flex;gap:6px;">' +
-                    '<button class="btn btn-sm btn-outline edit-model-btn" data-name="' + escapeHtml(name) + '">✏️ 编辑</button>' +
-                    '<button class="btn btn-sm btn-danger del-model-btn" data-name="' + escapeHtml(name) + '">🗑 删除</button>' +
+                    '<button class="btn btn-sm btn-outline edit-model-btn" data-name="' + escapeHtml(name) + '"><i data-lucide="pencil"></i>编辑</button>' +
+                    '<button class="btn btn-sm btn-danger del-model-btn" data-name="' + escapeHtml(name) + '"><i data-lucide="trash-2"></i>删除</button>' +
                     '</div></div>' +
                     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:12px;">';
                 var fields = [
@@ -681,7 +681,7 @@ export function getAdminScriptResponse(): Response {
 
                 // 端点列表
                 var totalEps = (endpoints.length || 0) + (model.endpoint_refs ? model.endpoint_refs.length : 0);
-                html += '<div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;color:var(--text-secondary);">🔗 端点 (' + totalEps + ')</div>';
+                html += '<div class="detail-section-title"><span>端点与 Key</span><strong>' + totalEps + '</strong></div>';
                 // 共享端点（来自 endpoint_pool）
                 if (model.endpoint_refs && model.endpoint_refs.length > 0) {
                     model.endpoint_refs.forEach(function(refName, refIdx) {
@@ -689,7 +689,7 @@ export function getAdminScriptResponse(): Response {
                         html += '<div class="ep-card" style="border-left:3px solid var(--primary);">' +
                             '<div class="ep-header">' +
                             '<span class="ep-url">' + escapeHtml(refName) + '</span>' +
-                            '<span class="badge badge-teal">🔗 端点池共享</span></div>' +
+                            '<span class="badge badge-teal">端点池共享</span></div>' +
                             '<div id="' + poolEpId + '"></div>' +
                             '<div class="input-group" style="margin-top:8px;">' +
                             '<input type="text" id="pool-key-input-' + refIdx + '" placeholder="新增 Key 到 ' + escapeHtml(refName) + '..." style="font-size:0.82rem;">' +
@@ -714,12 +714,12 @@ export function getAdminScriptResponse(): Response {
                             '<div class="input-group" style="margin-top:8px;">' +
                             '<input type="text" id="ep-key-input-' + i + '" placeholder="新增 API Key..." style="font-size:0.82rem;" class="key-input">' +
                             '<button class="btn btn-sm btn-primary add-ep-key-btn" data-model="' + escapeHtml(name) + '" data-idx="' + i + '">添加</button>' +
-                            '<button class="btn btn-sm btn-danger delete-ep-btn" data-model="' + escapeHtml(name) + '" data-idx="' + i + '" title="删除此端点">✕</button></div></div>';
+                            '<button class="icon-btn delete-ep-btn" data-model="' + escapeHtml(name) + '" data-idx="' + i + '" title="删除此端点" aria-label="删除此端点"><i data-lucide="trash-2"></i></button></div></div>';
                     });
                 }
 
                 // 添加端点按钮
-                html += '<div style="margin-top:12px;text-align:center;"><button class="btn btn-sm btn-outline add-ep-btn" data-model="' + escapeHtml(name) + '">➕ 添加端点</button></div>';
+                html += '<div style="margin-top:12px;text-align:center;"><button class="btn btn-sm btn-outline add-ep-btn" data-model="' + escapeHtml(name) + '"><i data-lucide="plus"></i>添加端点</button></div>';
 
                 html += '</div>';
                 detail.innerHTML = html;
@@ -797,6 +797,7 @@ export function getAdminScriptResponse(): Response {
                         else { var e = await r.json(); showToast('添加失败: ' + (e.error || ''), 'error'); }
                     });
                 });
+                refreshIcons();
             }
 
             /** 加载端点池 Key 状态（与模型独占端点类似，但调用池 API） */
@@ -1036,6 +1037,7 @@ export function getAdminScriptResponse(): Response {
                     modelNames.add(pattern);
                     var eps = statusData[modelKey] || [];
                     eps.forEach(function(ep) {
+                        if (!ep.base_url) return;
                         allEndpoints.push({ model: pattern, modelKey: modelKey, baseUrl: ep.base_url, keys: ep.keys || {}, weight: ep.weight });
                     });
                 }
@@ -1043,7 +1045,7 @@ export function getAdminScriptResponse(): Response {
                 // 更新筛选器
                 var select = document.getElementById('ep-filter-model');
                 var curVal = select.value;
-                select.innerHTML = '<option value="all">📊 全部模型</option>';
+                select.innerHTML = '<option value="all">全部模型</option>';
                 modelNames.forEach(function(n) {
                     var o = document.createElement('option');
                     o.value = n; o.textContent = n;
@@ -1058,50 +1060,72 @@ export function getAdminScriptResponse(): Response {
                 if (filterModel !== 'all') filtered = filtered.filter(function(ep) { return ep.model === filterModel; });
                 if (filterStatus === 'healthy') filtered = filtered.filter(function(ep) { return ep.keys.active === ep.keys.total && ep.keys.total > 0; });
                 else if (filterStatus === 'warning') filtered = filtered.filter(function(ep) { return ep.keys.active > 0 && ep.keys.active < ep.keys.total; });
-                else if (filterStatus === 'down') filtered = filtered.filter(function(ep) { return ep.keys.active === 0 && ep.keys.total > 0; });
+                else if (filterStatus === 'down') filtered = filtered.filter(function(ep) { return ep.keys.active === 0; });
 
                 if (!filtered || filtered.length === 0) {
-                    container.innerHTML = '<div class="empty-state"><div class="ico">📭</div><p>无匹配端点</p></div>';
+                    document.getElementById('endpoint-filter-summary').textContent = '0 个实际端点';
+                    container.innerHTML = '<div class="empty-state"><i data-lucide="server-off"></i><p>当前筛选条件下没有实际转发端点</p></div>';
+                    refreshIcons();
                     return;
                 }
 
-                var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:12px;">';
-                filtered.forEach(function(ep) {
+                var availableCount = filtered.filter(function(ep) { return (ep.keys.active || 0) > 0; }).length;
+                document.getElementById('endpoint-filter-summary').textContent = availableCount + ' / ' + filtered.length + ' 个端点可用';
+                var html = '<table class="endpoint-data-table"><thead><tr><th></th><th>模型</th><th>Base URL</th><th>Key 状态</th><th>健康度</th><th>权重</th></tr></thead><tbody>';
+                filtered.forEach(function(ep, index) {
                     var total = ep.keys.total || 0;
                     var active = ep.keys.active || 0;
                     var cooldown = ep.keys.cooldown || 0;
                     var health = total > 0 ? Math.round(active / total * 100) : 0;
                     var healthColor = health >= 80 ? '#059669' : (health >= 50 ? '#d97706' : '#dc2626');
-                    html += '<div class="card ep-card-link" data-ep-model="' + escapeHtml(ep.model) + '" style="padding:14px 16px;cursor:pointer;">' +
-                        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
-                        '<span class="ep-url" style="font-size:0.78rem;">' + escapeHtml(ep.baseUrl) + '</span>' +
-                        '<span class="badge badge-gray" style="font-size:0.7rem;">' + escapeHtml(ep.model) + '</span></div>' +
-                        '<div style="display:flex;gap:12px;align-items:center;">' +
-                        '<div class="health-ring" style="border:3px solid ' + healthColor + ';color:' + healthColor + ';width:40px;height:40px;">' + health + '%</div>' +
-                        '<div style="flex:1;"><div class="progress-bar"><div class="fill" style="width:' + health + '%;background:' + healthColor + ';"></div></div>' +
-                        '<div style="display:flex;gap:8px;margin-top:4px;font-size:0.72rem;color:var(--text-secondary);">' +
-                        '<span>● 活跃 ' + active + '</span>' +
-                        (cooldown > 0 ? '<span>◉ 冷却 ' + cooldown + '</span>' : '') +
-                        '<span>○ 总数 ' + total + '</span>' +
-                        '<span>权重 ' + (ep.weight || 1) + '</span></div></div></div></div>';
+                    var stateClass = active === 0 ? 'badge-red' : (active < total ? 'badge-yellow' : 'badge-green');
+                    var stateText = active === 0 ? '不可用' : (active < total ? '部分可用' : '健康');
+                    html += '<tr class="endpoint-main-row" data-detail="endpoint-detail-' + index + '" data-ep-model="' + escapeHtml(ep.model) + '">' +
+                        '<td><button class="endpoint-toggle" title="展开 Key 状态" aria-label="展开 Key 状态"><i data-lucide="chevron-right"></i></button></td>' +
+                        '<td><strong>' + escapeHtml(ep.model) + '</strong><div class="table-subtext">' + stateText + '</div></td>' +
+                        '<td class="endpoint-url-cell" title="' + escapeHtml(ep.baseUrl) + '">' + escapeHtml(ep.baseUrl) + '</td>' +
+                        '<td><span class="badge ' + stateClass + '">' + active + ' / ' + total + ' 有效</span></td>' +
+                        '<td><div class="health-inline"><div class="progress-bar"><div class="fill" style="width:' + health + '%;background:' + healthColor + ';"></div></div><strong>' + health + '%</strong></div></td>' +
+                        '<td>' + (ep.weight || 1) + '</td></tr>' +
+                        '<tr class="endpoint-detail-row" id="endpoint-detail-' + index + '" hidden><td colspan="6"><div class="endpoint-detail-content">' +
+                        '<div class="endpoint-detail-metric"><span>有效 Key</span><strong>' + active + '</strong></div>' +
+                        '<div class="endpoint-detail-metric"><span>冷却 Key</span><strong>' + cooldown + '</strong></div>' +
+                        '<div class="endpoint-detail-metric"><span>Key 总数</span><strong>' + total + '</strong></div>' +
+                        '<div class="endpoint-detail-metric"><span>管理入口</span><strong><button class="btn btn-xs btn-outline endpoint-manage-btn" data-ep-model="' + escapeHtml(ep.model) + '">查看模型</button></strong></div>' +
+                        '</div></td></tr>';
                 });
-                html += '</div>';
+                html += '</tbody></table>';
                 container.innerHTML = html;
-                // 端点卡片点击 — 跳转模型管理并选中
-                container.querySelectorAll('.ep-card-link').forEach(function(card) {
-                    card.addEventListener('click', function() {
-                        var m = card.dataset.epModel;
+                container.querySelectorAll('.endpoint-main-row').forEach(function(row) {
+                    row.addEventListener('click', function(event) {
+                        if (event.target.closest('.endpoint-manage-btn')) return;
+                        var detail = document.getElementById(row.dataset.detail);
+                        var expanded = !detail.hidden;
+                        detail.hidden = expanded;
+                        row.classList.toggle('expanded', !expanded);
+                    });
+                });
+                container.querySelectorAll('.endpoint-manage-btn').forEach(function(btn) {
+                    btn.addEventListener('click', function() {
+                        var m = btn.dataset.epModel;
                         switchPage('models');
                         selectedModelName = m;
                         loadModels();
                         setTimeout(function() { loadModelDetail(m); }, 200);
                     });
                 });
+                refreshIcons();
             }
 
-            // ======================== Token 统计（保留现有 + 增强） ========================
-            var tokenRangeType = 'd';
-            var tokenRangeVal = 1;
+            // ======================== Token 统计 ========================
+            var tokenRange = '1h';
+            var tokenRanges = {
+                '1h': { apiPath: '/minutely', value: 60, param: 'minutes', windowMs: 3600000, costWindow: '1h', minutes: 60, type: 'm', label: '最近 1 小时' },
+                '5h': { apiPath: '/minutely', value: 300, param: 'minutes', windowMs: 18000000, costWindow: '5h', minutes: 300, type: 'm', label: '最近 5 小时' },
+                '1d': { apiPath: '/hourly', value: 24, param: 'hours', windowMs: 86400000, costWindow: '1d', minutes: 1440, type: 'h', label: '最近 1 天' },
+                '7d': { apiPath: '/daily', value: 7, param: 'days', windowMs: 604800000, costWindow: '7d', minutes: 10080, type: 'd', label: '最近 7 天' },
+                '30d': { apiPath: '/daily', value: 30, param: 'days', windowMs: 2592000000, costWindow: '30d', minutes: 43200, type: 'd', label: '最近 30 天' }
+            };
             var tokenChartInst = {};
 
             function fmtUnit(v) {
@@ -1142,63 +1166,45 @@ export function getAdminScriptResponse(): Response {
 
             async function loadTokenCharts() {
                 var model = document.getElementById('token-model').value;
-                var apiPath, params, windowMs, actualVal = tokenRangeVal;
-                if (tokenRangeType === 'm') {
-                    actualVal = tokenRangeVal * 60;
-                    apiPath = '/minutely'; params = 'minutes=' + actualVal;
-                    windowMs = actualVal * 60000;
-                } else if (tokenRangeType === 'h') {
-                    // tokenRangeVal 已经是小时数 (如 1d=24h)
-                    apiPath = '/hourly'; params = 'hours=' + tokenRangeVal;
-                    windowMs = tokenRangeVal * 3600000;
-                } else {
-                    apiPath = '/daily'; params = 'days=' + tokenRangeVal;
-                    windowMs = tokenRangeVal * 86400000;
-                }
+                var range = tokenRanges[tokenRange];
+                var params = range.param + '=' + range.value;
                 if (model !== 'all') params += '&model=' + encodeURIComponent(model);
                 try {
-                    var dailyRes = await authFetch(API.TOKEN_STATS + apiPath + '?' + params);
+                    var dailyRes = await authFetch(API.TOKEN_STATS + range.apiPath + '?' + params);
                     var daily = await dailyRes.json();
-                    var summaryRes = await authFetch(API.TOKEN_STATS + '/summary?window=' + windowMs);
+                    var summaryParams = 'window=' + range.windowMs;
+                    if (model !== 'all') summaryParams += '&model=' + encodeURIComponent(model);
+                    var summaryRes = await authFetch(API.TOKEN_STATS + '/summary?' + summaryParams);
                     var summary = await summaryRes.json();
-                    var costParams = 'window=' + (tokenRangeType === 'm' ? '1h' : tokenRangeType === 'h' ? '1d' : tokenRangeVal + 'd');
+                    var costParams = 'window=' + range.costWindow;
                     if (model !== 'all') costParams += '&model=' + encodeURIComponent(model);
                     var costRes = await authFetch(API.TOKEN_COST + '?' + costParams);
                     var costData = costRes.ok ? await costRes.json() : null;
-                    renderTokenMetrics(daily, costData, tokenRangeType);
+                    document.getElementById('token-range-label').textContent = range.label;
+                    renderTokenMetrics(daily, costData, range);
                     if (typeof echarts !== 'undefined') {
                         ensureCharts();
                         (function(typ) { setTimeout(function() {
                             try { updateBarChart(daily, typ); updateLineChart(daily, typ); updatePieChart(summary); } catch (e) { console.warn('[TokenStats] chart error:', e); }
-                        }, 50); })(tokenRangeType);
+                        }, 50); })(range.type);
                     }
                 } catch (e) { if (e.message !== 'Unauthorized') showToast('加载统计数据失败', 'error'); }
             }
 
-            function renderTokenMetrics(daily, costData, type) {
+            function renderTokenMetrics(daily, costData, range) {
                 var totalTokens = daily.reduce(function(s, d) { return s + d.totalTokens; }, 0);
                 var totalReqs = daily.reduce(function(s, d) { return s + d.requestCount; }, 0);
-                var minutes;
-                if (type === 'm') minutes = tokenRangeVal * 60;
-                else if (type === 'h') minutes = tokenRangeVal * 60;
-                else minutes = tokenRangeVal * 1440;
+                var minutes = range.minutes;
                 var rpm = totalReqs > 0 ? (totalReqs / minutes).toFixed(1) : '0';
                 var tpm = totalTokens > 0 ? Math.round(totalTokens / minutes) : 0;
-                var costHtml = '';
-                if (costData && costData.total_cost_usd > 0) {
-                    costHtml = '<div class="stat-card" style="border-left-color:#6366f1;"><span class="ico">💰</span><div class="num">$' + costData.total_cost_usd.toFixed(4) + '</div><div class="lbl">预估成本 (USD)</div></div>';
-                } else if (costData) {
-                    costHtml = '<div class="stat-card" style="border-left-color:#94a3b8;"><span class="ico">💰</span><div class="num">$0.00</div><div class="lbl">预估成本 (USD)</div></div>';
-                }
+                var totalCost = costData ? Number(costData.total_cost_usd || 0) : 0;
                 document.getElementById('token-summary-cards').innerHTML =
-                    '<div class="stat-card"><span class="ico">📊</span><div class="num">' + fmtUnit(totalTokens) + '</div><div class="lbl">总 Token 消耗</div></div>' +
-                    '<div class="stat-card" style="border-left-color:#3b82f6;"><span class="ico">📨</span><div class="num">' + (totalReqs >= 1e3 ? fmtUnit(totalReqs) : totalReqs.toLocaleString()) + '</div><div class="lbl">总请求数</div></div>' +
-                    costHtml +
-                    '<div class="stat-card" style="border-left-color:#8b5cf6;"><span class="ico">⚡</span><div class="num">' + rpm + '</div><div class="lbl">RPM</div></div>' +
-                    '<div class="stat-card" style="border-left-color:#ec4899;"><span class="ico">🚀</span><div class="num">' + fmtUnit(tpm) + '</div><div class="lbl">TPM</div></div>';
-                if (costData && costData.models && costData.models.length > 0) {
-                    renderPricingTable(costData.models);
-                }
+                    '<article class="usage-metric"><span>Token 总量</span><strong>' + fmtUnit(totalTokens) + '</strong><small>输入与输出合计</small></article>' +
+                    '<article class="usage-metric"><span>请求总数</span><strong>' + (totalReqs >= 1e3 ? fmtUnit(totalReqs) : totalReqs.toLocaleString()) + '</strong><small>' + range.label + '</small></article>' +
+                    '<article class="usage-metric cost"><span>预估成本</span><strong>$' + totalCost.toFixed(4) + '</strong><small>USD</small></article>' +
+                    '<article class="usage-metric"><span>平均 RPM</span><strong>' + rpm + '</strong><small>每分钟请求</small></article>' +
+                    '<article class="usage-metric"><span>平均 TPM</span><strong>' + fmtUnit(tpm) + '</strong><small>每分钟 Token</small></article>';
+                renderPricingTable(costData && costData.models ? costData.models : []);
             }
 
             function renderPricingTable(models) {
@@ -1438,16 +1444,7 @@ export function getAdminScriptResponse(): Response {
                 btn.addEventListener('click', function() {
                     document.querySelectorAll('#token-range-group button').forEach(function(b) { b.classList.remove('active'); });
                     this.classList.add('active');
-                    var r = this.dataset.range;
-                    var ch = r.slice(-1);
-                    tokenRangeVal = parseInt(r);
-                    if (ch === 'h') {
-                        if (tokenRangeVal <= 5) { tokenRangeType = 'm'; }
-                        else { tokenRangeType = 'h'; }
-                    } else {
-                        if (tokenRangeVal === 1) { tokenRangeType = 'h'; tokenRangeVal = 24; }
-                        else { tokenRangeType = 'd'; }
-                    }
+                    tokenRange = this.dataset.range;
                     loadTokenCharts();
                 });
             });

@@ -218,3 +218,42 @@ Deno.test("admin page contains operations dashboard structure", async () => {
         assertEquals(html.includes(`id="${id}"`), true, `missing dashboard element ${id}`);
     }
 });
+
+Deno.test("admin secondary pages use dedicated operations workspaces", async () => {
+    const router = createBareRouter();
+    const response = await handleAdminRoutes(
+        new Request("http://local/admin"),
+        router,
+        "unused.yaml",
+    );
+    const html = await response?.text() || "";
+    const requiredIds = [
+        "model-workspace",
+        "model-list-panel",
+        "model-detail-panel",
+        "endpoint-workspace",
+        "endpoint-table",
+        "token-workspace",
+        "token-overview",
+        "token-trend-panel",
+        "cost-breakdown-panel",
+        "config-workspace",
+        "config-editor-panel",
+    ];
+    for (const id of requiredIds) {
+        assertEquals(html.includes(`id="${id}"`), true, `missing secondary workspace ${id}`);
+    }
+});
+
+Deno.test("token page initial range matches the active one-hour control", async () => {
+    const router = createBareRouter();
+    const script = await handleAdminRoutes(
+        new Request("http://local/admin/assets/admin.js"),
+        router,
+        "unused.yaml",
+    );
+    const source = await script?.text() || "";
+
+    assertEquals(source.includes("var tokenRange = '1h';"), true);
+    assertEquals(source.includes("'1h': { apiPath: '/minutely', value: 60"), true);
+});

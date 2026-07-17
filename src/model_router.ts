@@ -156,13 +156,6 @@ export class ModelRouter {
                 }
             }
 
-            // 3. 既无 refs 也无独占端点 → 空占位
-            if (endpoints.length === 0) {
-                const manager = new EndpointManager([], 1, cooldownMs, deleteAfterFailureMs, this.logger.child("Endpoint"));
-                endpoints.push(manager);
-                baseUrlMap.set(manager, "");
-            }
-
             const balancer = new WeightedLoadBalancer(endpoints);
             const managerData = {
                 matcher, endpoints, balancer,

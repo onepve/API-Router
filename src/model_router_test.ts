@@ -446,6 +446,23 @@ Deno.test("request log preserves original and resolved redirect models", async (
     assertEquals(record.resolvedModel, "target");
 });
 
+Deno.test("redirect-only models do not create or count placeholder endpoints", async () => {
+    const router = createBareRouter();
+    await configureRouter(router, [
+        { name: "alias", endpoints: [], redirects: [{ pre: "*", to: "target" }] },
+        {
+            name: "target",
+            endpoints: [{ base_url: "https://upstream.example/v1", keys: ["key-1"] }],
+        },
+    ]);
+
+    const status = await router.getFullStatus();
+
+    assertEquals(status["[0] alias (exact)"].length, 0);
+    assertEquals(status._summary.endpoints, 1);
+    assertEquals(status._summary.available_endpoints, 1);
+});
+
 Deno.test("request log waits for stream completion", async () => {
     const router = createBareRouter() as any;
     await configureRouter(router, [{
