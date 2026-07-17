@@ -327,9 +327,13 @@ export class ModelRouter {
                 headers: { "content-type": "application/json" },
             });
         }
+        const pathname = new URL(req.url).pathname;
+        if (!pathname.startsWith("/v1/")) {
+            return this.processRequest(req, new Set());
+        }
         const context: RequestContext = {
             startedAt: Date.now(),
-            path: new URL(req.url).pathname,
+            path: pathname,
             stream: false,
             attempts: 0,
             deferred: false,
@@ -498,7 +502,7 @@ export class ModelRouter {
         const timeout = endpoint.getTimeout() ?? config.default_timeout ?? 120;
         const maxRetries = endpoint.getMaxRetries() ?? config.default_max_retries ?? 3;
 
-        const upstreamUrl = new URL(url.pathname, baseUrl);
+        const upstreamUrl = this.buildUpstreamUrl(baseUrl, url.pathname);
         upstreamUrl.search = url.search;
 
         const headers = new Headers(req.headers);
@@ -738,6 +742,19 @@ export class ModelRouter {
         } else {
             headers.set("Authorization", `Bearer ${key}`);
         }
+    }
+
+    private buildUpstreamUrl(baseUrl: string, requestPath: string): URL {
+        const upstreamUrl = new URL(baseUrl);
+        const basePath = upstreamUrl.pathname.replace(/\/$/, "");
+        let suffix = requestPath.startsWith("/") ? requestPath : `/${requestPath}`;
+        if (basePath.endsWith("/v1") && suffix.startsWith("/v1/")) {
+            suffix = suffix.slice(3);
+        }
+        upstreamUrl.pathname = basePath && basePath !== "/"
+            ? `${basePath}${suffix}`
+            : suffix;
+        return upstreamUrl;
     }
 
     private async streamToBuffer(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {

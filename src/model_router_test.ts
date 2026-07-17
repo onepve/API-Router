@@ -531,3 +531,42 @@ Deno.test("stream wrapper preserves tool call SSE bytes exactly", async () => {
 
     assertEquals(await wrapped.text(), payload);
 });
+
+Deno.test("request log ignores non API browser asset requests", async () => {
+    const router = createBareRouter() as any;
+
+    const response = await router.handleRequest(new Request("http://local/favicon.ico"));
+
+    assertEquals(response.status, 404);
+    assertEquals(router.requestLogStore.query().records.length, 0);
+});
+
+Deno.test("forwarding preserves an upstream path prefix before v1", async () => {
+    const router = createBareRouter() as any;
+    const endpoint = new EndpointManager(["upstream-key"], 1, 60_000, 3_600_000, new Logger("error"));
+    const req = jsonRequest("http://local/v1/chat/completions", { model: "demo" });
+    let forwardedUrl = "";
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+        forwardedUrl = String(input);
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), {
+            headers: { "content-type": "application/json" },
+        }));
+    }) as typeof fetch;
+
+    try {
+        await router.forwardRequest(
+            req,
+            new TextEncoder().encode(await req.clone().text()),
+            "https://opencode.ai/zen/v1",
+            endpoint,
+            { name: "demo", default_max_retries: 1 },
+            "demo",
+            false,
+        );
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+
+    assertEquals(forwardedUrl, "https://opencode.ai/zen/v1/chat/completions");
+});
