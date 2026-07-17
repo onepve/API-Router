@@ -7,9 +7,14 @@ config.yaml
 token_stats.json
 model_catalog.json
 *.tmp
+dist/
+
+# Local operations script currently contains machine-specific credentials
+router.ps1
 
 # Local agent and design-session state
 .claude/
 .superpowers/
 .agents/
 .codex/
+.worktrees/
