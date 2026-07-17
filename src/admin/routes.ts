@@ -67,6 +67,8 @@ export async function handleAdminRoutes(
     // 4. 现有端点 + 新 Token 图表端点（由 ModelRouter 处理）
     if (
         (path === "/admin/status" && method === "GET") ||
+        (path === "/admin/request-logs" && method === "GET") ||
+        (path === "/admin/dashboard-summary" && method === "GET") ||
         (path.startsWith("/admin/token-stats") && method === "GET") ||
         (path === "/admin/add-key" && method === "POST") ||
         (path === "/admin/remove-key" && method === "POST")

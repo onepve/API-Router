@@ -830,6 +830,73 @@ export class ModelRouter {
             });
         }
 
+        if (url.pathname === "/admin/request-logs" && req.method === "GET") {
+            const afterParam = url.searchParams.get("after");
+            const limitParam = url.searchParams.get("limit");
+            const statusParam = url.searchParams.get("status");
+            const after = afterParam === null ? undefined : Number(afterParam);
+            const limit = limitParam === null ? undefined : Number(limitParam);
+            const status = statusParam === null ? undefined : Number(statusParam);
+            if ((after !== undefined && (!Number.isInteger(after) || after < 0)) ||
+                (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) ||
+                (status !== undefined && (!Number.isInteger(status) || status < 100 || status > 599))) {
+                return new Response(JSON.stringify({ error: "Invalid request log query" }), {
+                    status: 400,
+                    headers: { "content-type": "application/json" },
+                });
+            }
+            const result = this.requestLogStore.query({
+                after,
+                limit,
+                status,
+                model: url.searchParams.get("model") || undefined,
+                path: url.searchParams.get("path") || undefined,
+            });
+            return new Response(JSON.stringify({
+                records: result.records,
+                latest_id: result.latestId,
+            }), { headers: { "content-type": "application/json" } });
+        }
+
+        if (url.pathname === "/admin/dashboard-summary" && req.method === "GET") {
+            const windowStr = url.searchParams.get("window") || "24h";
+            const windowMap: Record<string, number> = {
+                "1h": 3_600_000,
+                "5h": 18_000_000,
+                "24h": 86_400_000,
+                "1d": 86_400_000,
+                "7d": 604_800_000,
+                "30d": 2_592_000_000,
+            };
+            const windowMs = windowMap[windowStr];
+            if (!windowMs) {
+                return new Response(JSON.stringify({ error: "Invalid dashboard window" }), {
+                    status: 400,
+                    headers: { "content-type": "application/json" },
+                });
+            }
+            const requests = this.requestLogStore.summary(windowMs);
+            const tokens = this.tokenStore.query(undefined, windowMs);
+            const cost = this.calculateCostData(windowMs);
+            const runtime = await this.getFullStatus();
+            return new Response(JSON.stringify({
+                window: windowStr,
+                request_count: requests.requestCount,
+                error_count: requests.errorCount,
+                success_rate: requests.successRate,
+                p95_latency_ms: requests.p95LatencyMs,
+                total_tokens: tokens.totalTokens,
+                total_cost_usd: cost.totalCostUsd,
+                active_keys: runtime._summary.active_keys,
+                total_keys: runtime._summary.total_keys,
+                cooling_keys: runtime._summary.cooling_keys,
+                available_endpoints: runtime._summary.available_endpoints,
+                total_endpoints: runtime._summary.endpoints,
+                timeline: requests.timeline,
+                models: requests.models,
+            }), { headers: { "content-type": "application/json" } });
+        }
+
         if (url.pathname === "/admin/token-stats" && req.method === "GET") {
             const model = url.searchParams.get("model") || undefined;
             const windowStr = url.searchParams.get("window") || "1d";
@@ -904,41 +971,12 @@ export class ModelRouter {
             };
             const windowMs = windowMap[windowStr] ?? windowMap["7d"];
 
-            const summary = this.tokenStore.queryModelSummary(windowMs);
-            const costData = summary
-                .filter(s => model ? s.model === model : true)
-                .map(s => {
-                    const hasBreakdown = s.inputTokens !== undefined || s.outputTokens !== undefined;
-                    const costInfo = this.catalog.calculateCost(s.model, s.totalTokens,
-                        hasBreakdown ? {
-                            input: s.inputTokens,
-                            output: s.outputTokens,
-                            cacheRead: s.cacheReadTokens,
-                            cacheWrite: s.cacheWriteTokens,
-                        } : undefined);
-                    return {
-                        model: s.model,
-                        total_tokens: s.totalTokens,
-                        input_tokens: s.inputTokens,
-                        output_tokens: s.outputTokens,
-                        cache_read_tokens: s.cacheReadTokens,
-                        cache_write_tokens: s.cacheWriteTokens,
-                        request_count: s.requestCount,
-                        cost_usd: costInfo.hasPricing ? Math.round(costInfo.cost * 10000) / 10000 : null,
-                        input_cost_usd: costInfo.inputCost !== undefined ? Math.round(costInfo.inputCost * 1000000) / 1000000 : null,
-                        output_cost_usd: costInfo.outputCost !== undefined ? Math.round(costInfo.outputCost * 1000000) / 1000000 : null,
-                        cache_read_cost_usd: costInfo.cacheReadCost !== undefined ? Math.round(costInfo.cacheReadCost * 1000000) / 1000000 : null,
-                        has_pricing: costInfo.hasPricing,
-                        pricing: costInfo.hasPricing ? this.catalog.getPricing(s.model) : null,
-                    };
-                });
-
-            const totalCost = costData.reduce((sum, c) => sum + (c.cost_usd || 0), 0);
+            const cost = this.calculateCostData(windowMs, model);
             return new Response(JSON.stringify({
                 window: windowStr,
                 model: model ?? "all",
-                total_cost_usd: Math.round(totalCost * 10000) / 10000,
-                models: costData,
+                total_cost_usd: cost.totalCostUsd,
+                models: cost.models,
             }), { headers: { "content-type": "application/json" } });
         }
 
@@ -1027,6 +1065,51 @@ export class ModelRouter {
         return new Response("Not Found", { status: 404 });
     }
 
+    private calculateCostData(windowMs: number, model?: string): {
+        totalCostUsd: number;
+        models: Array<Record<string, unknown>>;
+    } {
+        const summary = this.tokenStore.queryModelSummary(windowMs);
+        const models = summary
+            .filter(s => model ? s.model === model : true)
+            .map(s => {
+                const hasBreakdown = s.inputTokens !== undefined || s.outputTokens !== undefined;
+                const costInfo = this.catalog.calculateCost(s.model, s.totalTokens,
+                    hasBreakdown ? {
+                        input: s.inputTokens,
+                        output: s.outputTokens,
+                        cacheRead: s.cacheReadTokens,
+                        cacheWrite: s.cacheWriteTokens,
+                    } : undefined);
+                return {
+                    model: s.model,
+                    total_tokens: s.totalTokens,
+                    input_tokens: s.inputTokens,
+                    output_tokens: s.outputTokens,
+                    cache_read_tokens: s.cacheReadTokens,
+                    cache_write_tokens: s.cacheWriteTokens,
+                    request_count: s.requestCount,
+                    cost_usd: costInfo.hasPricing ? Math.round(costInfo.cost * 10_000) / 10_000 : null,
+                    input_cost_usd: costInfo.inputCost !== undefined
+                        ? Math.round(costInfo.inputCost * 1_000_000) / 1_000_000
+                        : null,
+                    output_cost_usd: costInfo.outputCost !== undefined
+                        ? Math.round(costInfo.outputCost * 1_000_000) / 1_000_000
+                        : null,
+                    cache_read_cost_usd: costInfo.cacheReadCost !== undefined
+                        ? Math.round(costInfo.cacheReadCost * 1_000_000) / 1_000_000
+                        : null,
+                    has_pricing: costInfo.hasPricing,
+                    pricing: costInfo.hasPricing ? this.catalog.getPricing(s.model) : null,
+                };
+            });
+        const total = models.reduce((sum, item) => sum + (typeof item.cost_usd === "number" ? item.cost_usd : 0), 0);
+        return {
+            totalCostUsd: Math.round(total * 10_000) / 10_000,
+            models,
+        };
+    }
+
     /** 运行时向端点池添加 Key */
     addPoolKey(poolName: string, key: string): EndpointManager | null {
         const manager = this.poolCache.get(poolName);
@@ -1106,7 +1189,7 @@ export class ModelRouter {
         const status: any = {};
         const seenManagers = new Set<EndpointManager>();
         let index = 0;
-        let totalUniqueKeys = 0, totalUniqueActive = 0;
+        let totalUniqueKeys = 0, totalUniqueActive = 0, availableEndpoints = 0;
 
         for (const entry of this.modelConfigs) {
             const key = `[${index}] ${entry.matcher.pattern} (${entry.matcher.type})`;
@@ -1126,6 +1209,7 @@ export class ModelRouter {
                     seenManagers.add(endpoint);
                     totalUniqueKeys += epStatus.total;
                     totalUniqueActive += epStatus.active;
+                    if (epStatus.active > 0) availableEndpoints++;
                 }
             }
             if (entry.config.endpoint_refs && entry.config.endpoint_refs.length > 0) {
@@ -1149,6 +1233,7 @@ export class ModelRouter {
                     seenManagers.add(endpoint);
                     totalUniqueKeys += epStatus.total;
                     totalUniqueActive += epStatus.active;
+                    if (epStatus.active > 0) availableEndpoints++;
                 }
             }
             if (this.defaultConfig.config.endpoint_refs?.length) {
@@ -1160,6 +1245,8 @@ export class ModelRouter {
             endpoints: seenManagers.size,
             total_keys: totalUniqueKeys,
             active_keys: totalUniqueActive,
+            cooling_keys: totalUniqueKeys - totalUniqueActive,
+            available_endpoints: availableEndpoints,
         };
         return status;
     }
