@@ -5,6 +5,8 @@ import { ModelRouter } from "../model_router.ts";
 import { loadConfig, parseConfig, saveConfig, findModelIndex, isModelNameDuplicate, validateModelConfig, validateRouterConfig, getModelsFromConfig } from "../config.ts";
 import type { RouterConfig, ModelConfig, EndpointConfig } from "../types.ts";
 import { getAdminPageResponse } from "./page.ts";
+import { getAdminStylesResponse } from "./styles.ts";
+import { getAdminScriptResponse } from "./script.ts";
 
 /** 处理所有 /admin/* 路由，非 admin 路由返回 null */
 export async function handleAdminRoutes(
@@ -19,6 +21,12 @@ export async function handleAdminRoutes(
     // 1. 管理页面 HTML（无需鉴权）
     if ((path === "/admin" || path === "/admin/") && method === "GET") {
         return getAdminPageResponse();
+    }
+    if (path === "/admin/assets/admin.css" && method === "GET") {
+        return getAdminStylesResponse();
+    }
+    if (path === "/admin/assets/admin.js" && method === "GET") {
+        return getAdminScriptResponse();
     }
 
     // 2. 鉴权检查 API（无需鉴权）

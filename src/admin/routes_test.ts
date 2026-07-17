@@ -150,3 +150,71 @@ Deno.test("dashboard summary rejects unknown windows", async () => {
 
     assertEquals(response?.status, 400);
 });
+
+Deno.test("admin page references local assets and required browser libraries", async () => {
+    const router = createBareRouter();
+    const response = await handleAdminRoutes(
+        new Request("http://local/admin"),
+        router,
+        "unused.yaml",
+    );
+    const html = await response?.text() || "";
+
+    assertEquals(html.includes("/admin/assets/admin.css"), true);
+    assertEquals(html.includes("/admin/assets/admin.js"), true);
+    assertEquals(html.includes("echarts"), true);
+    assertEquals(html.includes("codemirror"), true);
+    assertEquals(html.includes("lucide"), true);
+});
+
+Deno.test("admin asset routes return CSS and JavaScript", async () => {
+    const router = createBareRouter();
+    const css = await handleAdminRoutes(
+        new Request("http://local/admin/assets/admin.css"),
+        router,
+        "unused.yaml",
+    );
+    const script = await handleAdminRoutes(
+        new Request("http://local/admin/assets/admin.js"),
+        router,
+        "unused.yaml",
+    );
+
+    assertEquals(css?.status, 200);
+    assertEquals(css?.headers.get("content-type"), "text/css; charset=utf-8");
+    assertEquals(script?.status, 200);
+    assertEquals(script?.headers.get("content-type"), "application/javascript; charset=utf-8");
+});
+
+Deno.test("admin page contains operations dashboard structure", async () => {
+    const router = createBareRouter();
+    const response = await handleAdminRoutes(
+        new Request("http://local/admin"),
+        router,
+        "unused.yaml",
+    );
+    const html = await response?.text() || "";
+    const requiredIds = [
+        "metric-requests",
+        "metric-tokens",
+        "metric-cost",
+        "metric-success",
+        "metric-p95",
+        "metric-keys",
+        "metric-endpoints",
+        "metric-errors",
+        "chart-requests",
+        "chart-token-cost",
+        "chart-model-share",
+        "endpoint-health-matrix",
+        "request-log-table",
+        "request-log-model",
+        "request-log-status",
+        "request-log-path",
+        "btn-log-pause",
+        "mobile-nav-toggle",
+    ];
+    for (const id of requiredIds) {
+        assertEquals(html.includes(`id="${id}"`), true, `missing dashboard element ${id}`);
+    }
+});
