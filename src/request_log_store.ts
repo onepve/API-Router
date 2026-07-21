@@ -4,6 +4,7 @@ import type {
     RequestLogRecord,
     RequestLogSummary,
 } from "./types.ts";
+import { utc8MinuteKey } from "./time.ts";
 
 export class RequestLogStore {
     private records: RequestLogRecord[] = [];
@@ -55,11 +56,18 @@ export class RequestLogStore {
         const errors = records.filter(record => record.status >= 400);
         const durations = records.map(record => record.durationMs).sort((a, b) => a - b);
         const p95Index = durations.length === 0 ? -1 : Math.ceil(durations.length * 0.95) - 1;
+        const firstByteDurations = records
+            .map(record => record.firstByteMs)
+            .filter((value): value is number => typeof value === "number")
+            .sort((a, b) => a - b);
+        const p95FirstByteIndex = firstByteDurations.length === 0
+            ? -1
+            : Math.ceil(firstByteDurations.length * 0.95) - 1;
 
         const timelineMap = new Map<string, { requestCount: number; errorCount: number }>();
         const modelMap = new Map<string, { requestCount: number; totalTokens: number }>();
         for (const record of records) {
-            const bucket = new Date(record.timestamp).toISOString().slice(0, 16);
+            const bucket = utc8MinuteKey(record.timestamp);
             const timeline = timelineMap.get(bucket) || { requestCount: 0, errorCount: 0 };
             timeline.requestCount++;
             if (record.status >= 400) timeline.errorCount++;
@@ -78,6 +86,7 @@ export class RequestLogStore {
                 ? 0
                 : Math.round(((records.length - errors.length) / records.length) * 10_000) / 100,
             p95LatencyMs: p95Index >= 0 ? durations[p95Index] : 0,
+            p95FirstByteMs: p95FirstByteIndex >= 0 ? firstByteDurations[p95FirstByteIndex] : 0,
             timeline: Array.from(timelineMap.entries())
                 .sort(([a], [b]) => a.localeCompare(b))
                 .map(([bucket, value]) => ({ bucket, ...value })),

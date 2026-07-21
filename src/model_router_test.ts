@@ -67,6 +67,30 @@ Deno.test("reload applies top-level authentication and header settings", async (
     assertEquals(router.globalHeaderPolicy, rawConfig.headers);
 });
 
+Deno.test("model list matches the compatible client response shape", async () => {
+    const router = createBareRouter() as any;
+    router.catalog = {
+        resolvePatterns: () => ["gpt-5.6-sol"],
+        getModel: () => ({ provider: "openai" }),
+    };
+    await configureRouter(router, [{ name: "gpt-5.6-sol", endpoints: [] }]);
+
+    const response = await router.handleRequest(new Request("http://local/v1/models"));
+    const body = await response.json();
+
+    assertEquals(body, {
+        data: [{
+            id: "gpt-5.6-sol",
+            object: "model",
+            created: 1626777600,
+            owned_by: "openai",
+            supported_endpoint_types: ["openai"],
+        }],
+        object: "list",
+        success: true,
+    });
+});
+
 Deno.test("Anthropic forwarding does not leak the router authorization token", async () => {
     const router = createBareRouter() as any;
     const endpoint = new EndpointManager(["upstream-key"], 1, 60_000, 3_600_000, new Logger("error"));
@@ -600,6 +624,7 @@ Deno.test("request log records one successful final outcome", async () => {
     assertEquals(records[0].originalModel, "demo");
     assertEquals(records[0].resolvedModel, "demo");
     assertEquals(records[0].totalTokens, 5);
+    assert(typeof records[0].firstByteMs === "number", "non-stream request should record first-byte latency");
 });
 
 Deno.test("request log records retry count once after retry success", async () => {
@@ -716,6 +741,7 @@ Deno.test("request log waits for stream completion", async () => {
     assertEquals(records.length, 1);
     assertEquals(records[0].status, 200);
     assertEquals(records[0].stream, true);
+    assert(typeof records[0].firstByteMs === "number", "stream request should record first-chunk latency");
 });
 
 Deno.test("request log marks interrupted streams as failed", async () => {

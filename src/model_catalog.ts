@@ -240,15 +240,13 @@ export class ModelCatalog {
                     }
                 }
             } else {
-                // 精确匹配: model.id 与 pattern 完全相等
-                const lower = pattern.toLowerCase();
-                for (const m of this.models) {
-                    if (m.id.toLowerCase() === lower && !seen.has(m.id)) {
-                        seen.add(m.id);
-                        resolved.push(m.id);
-                        matched = true;
-                    }
+                // 精确配置必须保持原始 ID。路由匹配区分大小写，不能把目录中的
+                // 大小写变体一并暴露，否则 /v1/models 会列出实际不可调用的模型。
+                if (!seen.has(pattern)) {
+                    seen.add(pattern);
+                    resolved.push(pattern);
                 }
+                matched = true;
             }
 
             // 无匹配时保留原 pattern

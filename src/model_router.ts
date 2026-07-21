@@ -24,6 +24,7 @@ interface RequestContext {
     stream: boolean;
     attempts: number;
     totalTokens?: number;
+    firstByteMs?: number;
     deferred: boolean;
     error?: string;
     record?: RequestLogRecord;
@@ -297,14 +298,16 @@ export class ModelRouter {
             return {
                 id,
                 object: "model",
-                created: 1700000000,
+                created: 1626777600,
                 owned_by: catModel?.provider || "api-router",
+                supported_endpoint_types: ["openai"],
             };
         });
 
         return new Response(JSON.stringify({
-            object: "list",
             data,
+            object: "list",
+            success: true,
         }), {
             headers: { "content-type": "application/json" },
         });
@@ -569,6 +572,8 @@ export class ModelRouter {
                     continue;
                 }
 
+                const responseHeadersAt = Date.now();
+
                 // ---------- 流式 Token 统计（SSE 流截取） ----------
                 if (isStream && response.body) {
                     if (context) context.deferred = true;
@@ -582,6 +587,13 @@ export class ModelRouter {
                                 context.totalTokens = result.totalTokens;
                                 if (result.error) context.error = result.error;
                                 this.recordRequestOutcome(context, result.status);
+                            }
+                            : undefined,
+                        context
+                            ? () => {
+                                if (context.firstByteMs === undefined) {
+                                    context.firstByteMs = Math.max(0, Date.now() - context.startedAt);
+                                }
                             }
                             : undefined,
                     );
@@ -625,6 +637,13 @@ export class ModelRouter {
                 }
 
                 await endpoint.markSuccess(key);
+                if (context && response.body) {
+                    context.deferred = true;
+                    return this.wrapTimedResponse(response, context);
+                }
+                if (context && context.firstByteMs === undefined) {
+                    context.firstByteMs = Math.max(0, responseHeadersAt - context.startedAt);
+                }
                 return response;
             } catch (err) {
                 lastError = err instanceof Error ? err : new Error(String(err));
@@ -649,12 +668,14 @@ export class ModelRouter {
         key: string,
         endpoint: EndpointManager,
         onComplete?: (result: { status: number; totalTokens?: number; error?: string }) => void,
+        onFirstByte?: () => void,
     ): Response {
         let streamBuffer = "";
         let lastUsage: { totalTokens: number; usageObj: any } | null = null;
         const tokenStore = this.tokenStore;
         const decoder = new TextDecoder();
         const self = this;
+        let firstChunkSeen = false;
 
         const inspectLine = (line: string) => {
             const normalized = line.endsWith("\r") ? line.slice(0, -1) : line;
@@ -682,6 +703,10 @@ export class ModelRouter {
 
         const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>({
             transform(chunk, controller) {
+                if (!firstChunkSeen) {
+                    firstChunkSeen = true;
+                    onFirstByte?.();
+                }
                 // 按行解析 SSE 数据帧
                 streamBuffer += decoder.decode(chunk, { stream: true });
                 const lines = streamBuffer.split("\n");
@@ -714,6 +739,37 @@ export class ModelRouter {
             const message = e?.message || String(e);
             onComplete?.({ status: 502, totalTokens: lastUsage?.totalTokens, error: message });
             self.logger.error(`Stream pipe error: ${message}`);
+        });
+
+        return new Response(readable, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers,
+        });
+    }
+
+    /** 非流式响应计时包装：首个正文块记首字延迟，正文结束记总耗时。 */
+    private wrapTimedResponse(response: Response, context: RequestContext): Response {
+        let firstChunkSeen = false;
+        const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>({
+            transform: (chunk, controller) => {
+                if (!firstChunkSeen) {
+                    firstChunkSeen = true;
+                    context.firstByteMs = Math.max(0, Date.now() - context.startedAt);
+                }
+                controller.enqueue(chunk);
+            },
+            flush: () => {
+                if (context.firstByteMs === undefined) {
+                    context.firstByteMs = Math.max(0, Date.now() - context.startedAt);
+                }
+                this.recordRequestOutcome(context, response.status);
+            },
+        });
+
+        response.body!.pipeTo(writable).catch((error) => {
+            context.error = error?.message || String(error);
+            this.recordRequestOutcome(context, 502);
         });
 
         return new Response(readable, {
@@ -786,6 +842,7 @@ export class ModelRouter {
             path: context.path,
             status,
             durationMs: Math.max(0, Date.now() - context.startedAt),
+            firstByteMs: context.firstByteMs,
             totalTokens: context.totalTokens,
             upstreamBaseUrl: context.upstreamBaseUrl,
             stream: context.stream,
@@ -895,6 +952,7 @@ export class ModelRouter {
                 error_count: requests.errorCount,
                 success_rate: requests.successRate,
                 p95_latency_ms: requests.p95LatencyMs,
+                p95_first_byte_ms: requests.p95FirstByteMs,
                 total_tokens: tokens.totalTokens,
                 total_cost_usd: cost.totalCostUsd,
                 active_keys: runtime._summary.active_keys,

@@ -49,6 +49,7 @@ function logInput(overrides: Record<string, unknown> = {}) {
         path: "/v1/chat/completions",
         status: 200,
         durationMs: 100,
+        firstByteMs: 50,
         totalTokens: 10,
         upstreamBaseUrl: "https://upstream.example/v1",
         stream: false,
@@ -114,9 +115,9 @@ Deno.test("dashboard summary includes request token cost key and endpoint metric
             { base_url: "https://upstream-b.example/v1", keys: [] },
         ],
     }]);
-    router.requestLogStore.record(logInput({ durationMs: 10 }));
-    router.requestLogStore.record(logInput({ durationMs: 20 }));
-    router.requestLogStore.record(logInput({ durationMs: 100, status: 500 }));
+    router.requestLogStore.record(logInput({ durationMs: 10, firstByteMs: 5 }));
+    router.requestLogStore.record(logInput({ durationMs: 20, firstByteMs: 15 }));
+    router.requestLogStore.record(logInput({ durationMs: 100, firstByteMs: 80, status: 500 }));
 
     const response = await handleAdminRoutes(
         new Request("http://local/admin/dashboard-summary?window=24h"),
@@ -130,6 +131,7 @@ Deno.test("dashboard summary includes request token cost key and endpoint metric
     assertEquals(body.error_count, 1);
     assertEquals(body.success_rate, 66.67);
     assertEquals(body.p95_latency_ms, 100);
+    assertEquals(body.p95_first_byte_ms, 80);
     assertEquals(body.total_tokens, 1234);
     assertEquals(body.total_cost_usd, 1.25);
     assertEquals(body.active_keys, 2);
@@ -217,6 +219,39 @@ Deno.test("admin page contains operations dashboard structure", async () => {
     for (const id of requiredIds) {
         assertEquals(html.includes(`id="${id}"`), true, `missing dashboard element ${id}`);
     }
+});
+
+Deno.test("admin assets include UTC+8, responsive chart resizing and theme controls", async () => {
+    const router = createBareRouter();
+    const pageResponse = await handleAdminRoutes(new Request("http://local/admin"), router, "unused.yaml");
+    const scriptResponse = await handleAdminRoutes(new Request("http://local/admin/assets/admin.js"), router, "unused.yaml");
+    const cssResponse = await handleAdminRoutes(new Request("http://local/admin/assets/admin.css"), router, "unused.yaml");
+    const html = await pageResponse?.text() || "";
+    const source = await scriptResponse?.text() || "";
+    const css = await cssResponse?.text() || "";
+
+    for (const id of [
+        "theme-mode-toggle",
+        "theme-color-toggle",
+        "theme-color-popover",
+        "theme-color-picker",
+        "theme-color-meta",
+        "main-content",
+    ]) {
+        assertEquals(html.includes(`id="${id}"`), true, `missing appearance control ${id}`);
+    }
+    assertEquals(source.includes("const UI_TIME_ZONE = 'Asia/Shanghai';"), true);
+    assertEquals(source.includes("new Intl.DateTimeFormat('zh-CN'"), true);
+    assertEquals(source.includes("new ResizeObserver(function(entries)"), true);
+    assertEquals(source.includes("data.p95_first_byte_ms"), true);
+    assertEquals(source.includes("row.firstByteMs"), true);
+    assertEquals(source.includes("return name + '\\n' + p.percent + '%';"), true);
+    assertEquals(source.includes("'{b}\\\\n{d}%'"), false);
+    assertEquals(css.includes('html[data-theme="dark"]'), true);
+    assertEquals(css.includes(".ep-card, .model-detail-panel .ep-card { background-color: var(--surface-muted); }"), true);
+    assertEquals(css.includes("@media (min-width: 901px)"), true);
+    assertEquals(css.includes("#pricing-table-container td::before"), true);
+    assertEquals(css.includes(".endpoint-data-table tr.endpoint-main-row td::before"), true);
 });
 
 Deno.test("admin secondary pages use dedicated operations workspaces", async () => {

@@ -21,6 +21,7 @@ function sample(overrides: Partial<RequestLogInput> = {}): RequestLogInput {
         path: "/v1/chat/completions",
         status: 200,
         durationMs: 120,
+        firstByteMs: 40,
         totalTokens: 42,
         upstreamBaseUrl: "https://upstream.example/v1",
         stream: false,
@@ -66,9 +67,9 @@ Deno.test("request log store filters by model status and path", () => {
 Deno.test("request log summary calculates success rate p95 timeline and model totals", () => {
     const store = new RequestLogStore(10);
     const base = 1_700_000_000_000;
-    store.record(sample({ timestamp: base, durationMs: 10, totalTokens: 10, resolvedModel: "a" }));
-    store.record(sample({ timestamp: base + 10_000, durationMs: 20, totalTokens: 20, resolvedModel: "a" }));
-    store.record(sample({ timestamp: base + 70_000, durationMs: 100, totalTokens: 0, resolvedModel: "b", status: 500 }));
+    store.record(sample({ timestamp: base, durationMs: 10, firstByteMs: 5, totalTokens: 10, resolvedModel: "a" }));
+    store.record(sample({ timestamp: base + 10_000, durationMs: 20, firstByteMs: 15, totalTokens: 20, resolvedModel: "a" }));
+    store.record(sample({ timestamp: base + 70_000, durationMs: 100, firstByteMs: 80, totalTokens: 0, resolvedModel: "b", status: 500 }));
 
     const summary = store.summary(120_000, base + 90_000);
 
@@ -76,7 +77,9 @@ Deno.test("request log summary calculates success rate p95 timeline and model to
     assertEquals(summary.errorCount, 1);
     assertEquals(summary.successRate, 66.67);
     assertEquals(summary.p95LatencyMs, 100);
+    assertEquals(summary.p95FirstByteMs, 80);
     assertEquals(summary.timeline.length, 2);
+    assertEquals(summary.timeline.map(item => item.bucket), ["2023-11-15T06:13", "2023-11-15T06:14"]);
     assertEquals(summary.models, [
         { model: "a", requestCount: 2, totalTokens: 30 },
         { model: "b", requestCount: 1, totalTokens: 0 },

@@ -1,6 +1,8 @@
 // src/logger.ts
 // 日志分级系统 — 支持 error / warn / info / debug 四个等级
 
+import { formatUtc8Timestamp } from "./time.ts";
+
 export type LogLevel = "error" | "warn" | "info" | "debug";
 
 const LEVEL_MAP: Record<LogLevel, number> = {
@@ -84,19 +86,9 @@ export class Logger {
         if (this.effectiveLevel >= 3) console.log(this.format(3, msg));
     }
 
-    private pad(n: number): string {
-        return n.toString().padStart(2, "0");
-    }
-
-    private localTime(): string {
-        const d = new Date();
-        return `${d.getFullYear()}-${this.pad(d.getMonth() + 1)}-${this.pad(d.getDate())} ` +
-            `${this.pad(d.getHours())}:${this.pad(d.getMinutes())}:${this.pad(d.getSeconds())}`;
-    }
-
     private format(level: number, msg: string): string {
         const emoji = LEVEL_EMOJI[level] || "";
-        const ts = this.localTime();
+        const ts = formatUtc8Timestamp();
         return this.prefix
             ? `${ts} ${emoji} ${this.prefix} ${msg}`
             : `${ts} ${emoji} ${msg}`;

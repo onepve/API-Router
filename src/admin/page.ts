@@ -6,8 +6,21 @@ export function getAdminPageResponse(): Response {
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.5">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#f3f5f7" id="theme-color-meta">
     <title>API Router 管理面板</title>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com">
+    <link rel="preconnect" href="https://unpkg.com">
+    <script>
+        (function() {
+            var mode = localStorage.getItem('admin_theme_mode') || 'system';
+            var dark = mode === 'dark' || (mode === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+            document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+            document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+            var accent = localStorage.getItem('admin_theme_color');
+            if (/^#[0-9a-f]{6}$/i.test(accent || '')) document.documentElement.style.setProperty('--primary', accent);
+        })();
+    </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.0/echarts.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.js"></script>
@@ -16,6 +29,7 @@ export function getAdminPageResponse(): Response {
     <link rel="stylesheet" href="/admin/assets/admin.css">
 </head>
 <body>
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
 
     <!-- ====== 侧边栏 ====== -->
     <aside class="sidebar" id="sidebar">
@@ -36,11 +50,30 @@ export function getAdminPageResponse(): Response {
     </aside>
 
     <!-- ====== 主内容 ====== -->
-    <div class="main">
+    <main class="main" id="main-content">
         <header class="main-header">
             <button class="icon-btn mobile-nav-toggle" id="mobile-nav-toggle" title="打开导航" aria-label="打开导航"><i data-lucide="menu"></i></button>
             <h1 id="page-title">仪表盘</h1>
-            <div class="header-right" id="header-info"></div>
+            <div class="header-right">
+                <span id="header-info"></span>
+                <div class="appearance-controls" aria-label="外观设置">
+                    <button class="icon-btn" id="theme-mode-toggle" title="切换明暗主题" aria-label="切换明暗主题"><i data-lucide="monitor"></i></button>
+                    <div class="theme-color-menu">
+                        <button class="icon-btn theme-color-toggle" id="theme-color-toggle" title="设置主题色" aria-label="设置主题色" aria-expanded="false" aria-controls="theme-color-popover"><span class="theme-color-swatch" id="theme-color-swatch"></span></button>
+                        <div class="theme-color-popover" id="theme-color-popover" hidden>
+                            <div class="theme-popover-heading"><strong>主题色</strong><span>选择界面强调色</span></div>
+                            <div class="theme-presets" aria-label="主题色预设">
+                                <button type="button" class="theme-preset" data-theme-color="#167c73" style="--swatch:#167c73" aria-label="青绿色" aria-pressed="false"></button>
+                                <button type="button" class="theme-preset" data-theme-color="#2563eb" style="--swatch:#2563eb" aria-label="蓝色" aria-pressed="false"></button>
+                                <button type="button" class="theme-preset" data-theme-color="#7c3aed" style="--swatch:#7c3aed" aria-label="紫色" aria-pressed="false"></button>
+                                <button type="button" class="theme-preset" data-theme-color="#db2777" style="--swatch:#db2777" aria-label="玫红色" aria-pressed="false"></button>
+                                <button type="button" class="theme-preset" data-theme-color="#d97706" style="--swatch:#d97706" aria-label="琥珀色" aria-pressed="false"></button>
+                            </div>
+                            <label class="theme-custom-color"><span>自定义颜色</span><input id="theme-color-picker" name="theme-color" type="color" value="#167c73" aria-label="自定义主题色"></label>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </header>
         <div class="main-body">
 
@@ -80,7 +113,7 @@ export function getAdminPageResponse(): Response {
                     <article class="ops-metric" id="metric-tokens"><span>今日 Token</span><strong>--</strong><small>输入与输出</small></article>
                     <article class="ops-metric" id="metric-cost"><span>预估成本</span><strong>--</strong><small>USD</small></article>
                     <article class="ops-metric" id="metric-success"><span>成功率</span><strong>--</strong><small>HTTP &lt; 400</small></article>
-                    <article class="ops-metric" id="metric-p95"><span>P95 延迟</span><strong>--</strong><small>端到端</small></article>
+                    <article class="ops-metric" id="metric-p95"><span>P95 首字延迟</span><strong>--</strong><small>总耗时 --</small></article>
                     <article class="ops-metric" id="metric-keys"><span>有效 Key / 总数</span><strong>-- / --</strong><small>冷却 --</small></article>
                     <article class="ops-metric" id="metric-endpoints"><span>可用端点 / 总数</span><strong>-- / --</strong><small>实时健康</small></article>
                     <article class="ops-metric metric-alert" id="metric-errors"><span>异常请求</span><strong>--</strong><small>最近 24 小时</small></article>
@@ -114,13 +147,13 @@ export function getAdminPageResponse(): Response {
                             <button class="icon-btn" id="btn-log-pause" title="暂停日志" aria-label="暂停日志"><i data-lucide="pause"></i></button>
                         </div>
                         <div class="request-filters">
-                            <input id="request-log-model" type="search" placeholder="模型">
-                            <select id="request-log-status"><option value="">全部状态</option><option value="200">200</option><option value="400">4xx</option><option value="500">5xx</option></select>
-                            <select id="request-log-path"><option value="">全部接口</option><option value="/v1/chat/completions">Chat</option><option value="/v1/responses">Responses</option><option value="/v1/images/generations">Images</option></select>
+                            <input id="request-log-model" name="request-log-model" type="search" placeholder="筛选模型…" aria-label="筛选请求模型" autocomplete="off" spellcheck="false">
+                            <select id="request-log-status" name="request-log-status" aria-label="筛选请求状态"><option value="">全部状态</option><option value="200">200</option><option value="400">4xx</option><option value="500">5xx</option></select>
+                            <select id="request-log-path" name="request-log-path" aria-label="筛选请求接口"><option value="">全部接口</option><option value="/v1/chat/completions">Chat</option><option value="/v1/responses">Responses</option><option value="/v1/images/generations">Images</option></select>
                         </div>
                         <div class="request-table-wrap">
                             <table class="request-table">
-                                <thead><tr><th>时间</th><th>状态</th><th>模型</th><th>耗时</th><th>Token</th></tr></thead>
+                                <thead><tr><th>时间</th><th>状态</th><th>模型</th><th>首字 / 总耗时</th><th>Token</th></tr></thead>
                                 <tbody id="request-log-table"><tr><td colspan="5" class="muted-cell">等待请求...</td></tr></tbody>
                             </table>
                         </div>
@@ -143,7 +176,7 @@ export function getAdminPageResponse(): Response {
                     <div class="model-master-detail">
                         <aside class="workspace-panel model-list-panel" id="model-list-panel">
                             <div class="panel-tools">
-                                <div class="search-control"><i data-lucide="search"></i><input type="search" id="model-filter" placeholder="搜索模型"></div>
+                                <div class="search-control"><i data-lucide="search"></i><input type="search" id="model-filter" name="model-filter" placeholder="搜索模型…" aria-label="搜索模型" autocomplete="off" spellcheck="false"></div>
                             </div>
                             <div class="model-list-scroll" id="model-list"></div>
                         </aside>
@@ -204,7 +237,7 @@ export function getAdminPageResponse(): Response {
                     <header class="workspace-header token-header">
                         <div><span class="eyebrow">USAGE & SPEND</span><h2>Token 与成本</h2><p>按统一时间范围查看用量、请求速率、模型占比和预估费用。</p></div>
                         <div class="token-controls">
-                            <select id="token-model"><option value="all">全部模型</option></select>
+                            <select id="token-model" name="token-model" aria-label="选择统计模型"><option value="all">全部模型</option></select>
                             <div class="btn-group" id="token-range-group" aria-label="统计范围">
                                 <button class="active" data-range="1h">1 小时</button>
                                 <button data-range="5h">5 小时</button>
@@ -251,16 +284,16 @@ export function getAdminPageResponse(): Response {
                     </header>
                     <section class="workspace-panel config-editor-panel" id="config-editor-panel">
                         <div class="config-editor-bar"><span class="config-file-name">config.yaml</span><div id="config-status">尚未加载</div></div>
-                        <textarea id="config-editor"></textarea>
+                        <textarea id="config-editor" name="config-editor" aria-label="config.yaml 配置内容" autocomplete="off" spellcheck="false"></textarea>
                     </section>
                 </section>
             </div>
 
         </div>
-    </div>
+    </main>
 
     <!-- Toast + Modal 容器 -->
-    <div class="toast-container" id="toast-container"></div>
+    <div class="toast-container" id="toast-container" aria-live="polite" aria-atomic="true"></div>
     <div id="modal-container"></div>
 
     <script src="/admin/assets/admin.js"></script>

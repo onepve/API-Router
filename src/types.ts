@@ -96,6 +96,8 @@ export interface RequestLogInput {
     path: string;
     status: number;
     durationMs: number;
+    /** 首字节/首个流式数据块到达延迟 */
+    firstByteMs?: number;
     totalTokens?: number;
     upstreamBaseUrl?: string;
     stream: boolean;
@@ -120,6 +122,7 @@ export interface RequestLogSummary {
     errorCount: number;
     successRate: number;
     p95LatencyMs: number;
+    p95FirstByteMs: number;
     timeline: Array<{
         bucket: string;
         requestCount: number;

@@ -3,6 +3,12 @@
 
 import type { TokenRecord } from "./types.ts";
 import { Logger } from "./logger.ts";
+import {
+    utc8DateKey,
+    utc8HourKey,
+    utc8MinuteKey,
+    utc8StartOfDay,
+} from "./time.ts";
 
 export class TokenStore {
     private records: TokenRecord[] = [];
@@ -103,12 +109,13 @@ export class TokenStore {
     /** 按日分组统计，返回最近 N 天数据（缺失日期用 0 填充） */
     queryDaily(model?: string, days: number = 30): Array<{ date: string; totalTokens: number; requestCount: number }> {
         const now = Date.now();
-        const since = now - days * 86400000;
+        const todayStart = utc8StartOfDay(now);
+        const since = todayStart - (days - 1) * 86400000;
         const filtered = this.records.filter(r => r.timestamp >= since && (!model || r.model === model));
 
         const byDate = new Map<string, { totalTokens: number; requestCount: number }>();
         for (const r of filtered) {
-            const date = new Date(r.timestamp).toISOString().slice(0, 10);
+            const date = utc8DateKey(r.timestamp);
             const entry = byDate.get(date) || { totalTokens: 0, requestCount: 0 };
             entry.totalTokens += r.totalTokens;
             entry.requestCount++;
@@ -117,7 +124,7 @@ export class TokenStore {
 
         const result: Array<{ date: string; totalTokens: number; requestCount: number }> = [];
         for (let i = days - 1; i >= 0; i--) {
-            const d = new Date(now - i * 86400000).toISOString().slice(0, 10);
+            const d = utc8DateKey(todayStart - i * 86400000);
             const entry = byDate.get(d);
             result.push({ date: d, totalTokens: entry?.totalTokens || 0, requestCount: entry?.requestCount || 0 });
         }
@@ -132,8 +139,7 @@ export class TokenStore {
 
         const byBucket = new Map<string, { totalTokens: number; requestCount: number }>();
         for (const r of filtered) {
-            const d = new Date(r.timestamp);
-            const bucket = d.toISOString().slice(0, 16); // "2026-07-01T14:05"
+            const bucket = utc8MinuteKey(r.timestamp); // "2026-07-01T22:05" (UTC+8)
             const entry = byBucket.get(bucket) || { totalTokens: 0, requestCount: 0 };
             entry.totalTokens += r.totalTokens;
             entry.requestCount++;
@@ -142,8 +148,7 @@ export class TokenStore {
 
         const result: Array<{ date: string; totalTokens: number; requestCount: number }> = [];
         for (let i = minutes - 1; i >= 0; i--) {
-            const d = new Date(now - i * 60000);
-            const bucket = d.toISOString().slice(0, 16);
+            const bucket = utc8MinuteKey(now - i * 60000);
             const entry = byBucket.get(bucket);
             result.push({ date: bucket, totalTokens: entry?.totalTokens || 0, requestCount: entry?.requestCount || 0 });
         }
@@ -158,8 +163,7 @@ export class TokenStore {
 
         const byBucket = new Map<string, { totalTokens: number; requestCount: number }>();
         for (const r of filtered) {
-            const d = new Date(r.timestamp);
-            const bucket = d.toISOString().slice(0, 13) + ":00"; // "2026-07-01T14:00"
+            const bucket = utc8HourKey(r.timestamp); // "2026-07-01T22:00" (UTC+8)
             const entry = byBucket.get(bucket) || { totalTokens: 0, requestCount: 0 };
             entry.totalTokens += r.totalTokens;
             entry.requestCount++;
@@ -168,8 +172,7 @@ export class TokenStore {
 
         const result: Array<{ date: string; totalTokens: number; requestCount: number }> = [];
         for (let i = hours - 1; i >= 0; i--) {
-            const d = new Date(now - i * 3600000);
-            const bucket = d.toISOString().slice(0, 13) + ":00";
+            const bucket = utc8HourKey(now - i * 3600000);
             const entry = byBucket.get(bucket);
             result.push({ date: bucket, totalTokens: entry?.totalTokens || 0, requestCount: entry?.requestCount || 0 });
         }

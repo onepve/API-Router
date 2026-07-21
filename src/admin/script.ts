@@ -30,6 +30,15 @@ export function getAdminScriptResponse(): Response {
             let requestLogInterval = null;
             let configDirty = false;
             let loadingConfig = false;
+            let chartResizeObserver = null;
+            const UI_TIME_ZONE = 'Asia/Shanghai';
+            const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+                timeZone: UI_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+            });
+            const clockFormatter = new Intl.DateTimeFormat('zh-CN', {
+                timeZone: UI_TIME_ZONE, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+            });
 
             // ======================== Toast ========================
             function showToast(message, type, duration) {
@@ -51,7 +60,7 @@ export function getAdminScriptResponse(): Response {
                 container.innerHTML =
                     '<div class="modal-overlay" id="modal-overlay">' +
                     '<div class="modal">' +
-                    '<div class="modal-header"><h2>' + title + '</h2><button class="modal-close" id="modal-close-btn">✕</button></div>' +
+                    '<div class="modal-header"><h2>' + title + '</h2><button type="button" class="modal-close" id="modal-close-btn" aria-label="关闭对话框">✕</button></div>' +
                     '<div class="modal-body">' + bodyHtml + '</div>' +
                     (footerHtml ? '<div class="modal-footer">' + footerHtml + '</div>' : '') +
                     '</div></div>';
@@ -187,7 +196,7 @@ export function getAdminScriptResponse(): Response {
                         loadTokenCharts();
                     }, 50);
                 }
-                if (pageName === 'config') { setTimeout(function(){ initCodeMirror(); loadConfigToEditor(); }, 50); }
+                if (pageName === 'config') { setTimeout(function(){ initCodeMirror(); if (codeMirrorEditor) codeMirrorEditor.refresh(); loadConfigToEditor(); }, 50); }
                 if (pageName === 'endpoints') {
                     setTimeout(function(){
                         var activeEndpointView = document.querySelector('#endpoint-view-tabs button.active');
@@ -198,6 +207,7 @@ export function getAdminScriptResponse(): Response {
                     setTimeout(function(){ loadModelDetail(selectedModelName); }, 50);
                 }
                 if (window.innerWidth <= 600) document.getElementById('sidebar').classList.remove('open');
+                setTimeout(resizeAllCharts, 80);
                 refreshIcons();
             }
 
@@ -217,7 +227,157 @@ export function getAdminScriptResponse(): Response {
 
             function formatTime(ts) {
                 if (!ts) return '--';
-                return new Date(ts).toLocaleString('zh-CN');
+                return dateTimeFormatter.format(new Date(ts));
+            }
+
+            function formatClock(ts) {
+                if (!ts) return '--';
+                return clockFormatter.format(new Date(ts));
+            }
+
+            function cssVar(name, fallback) {
+                var value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+                return value || fallback;
+            }
+
+            function chartColors() {
+                return {
+                    text: cssVar('--text-secondary', '#61707d'),
+                    muted: cssVar('--text-muted', '#8a97a2'),
+                    grid: cssVar('--chart-grid', '#edf0f2'),
+                    primary: cssVar('--primary', '#167c73'),
+                    info: cssVar('--info', '#447aa8'),
+                    warning: cssVar('--warning', '#c27a21'),
+                    danger: cssVar('--danger', '#c84a42'),
+                    surface: cssVar('--surface', '#ffffff'),
+                };
+            }
+
+            function chartFontSize(mobile, desktop) {
+                return window.innerWidth <= 600 ? mobile : desktop;
+            }
+
+            function mixHex(color, target, weight) {
+                function parse(hex) {
+                    var value = hex.replace('#', '');
+                    if (value.length !== 6) return null;
+                    return [0, 2, 4].map(function(i) { return parseInt(value.slice(i, i + 2), 16); });
+                }
+                var a = parse(color); var b = parse(target);
+                if (!a || !b) return color;
+                return '#' + a.map(function(v, i) {
+                    return Math.round(v * (1 - weight) + b[i] * weight).toString(16).padStart(2, '0');
+                }).join('');
+            }
+
+            function applyAccentColor(color) {
+                if (!/^#[0-9a-f]{6}$/i.test(color || '')) color = '#167c73';
+                var root = document.documentElement;
+                root.style.setProperty('--primary', color);
+                root.style.setProperty('--primary-hover', mixHex(color, '#000000', 0.18));
+                root.style.setProperty('--primary-light', mixHex(color, root.dataset.theme === 'dark' ? '#182129' : '#ffffff', root.dataset.theme === 'dark' ? 0.72 : 0.80));
+                root.style.setProperty('--primary-50', mixHex(color, root.dataset.theme === 'dark' ? '#182129' : '#ffffff', root.dataset.theme === 'dark' ? 0.86 : 0.93));
+                root.style.setProperty('--primary-text', mixHex(color, root.dataset.theme === 'dark' ? '#ffffff' : '#000000', root.dataset.theme === 'dark' ? 0.38 : 0.18));
+                root.style.setProperty('--primary-border', mixHex(color, root.dataset.theme === 'dark' ? '#ffffff' : '#000000', root.dataset.theme === 'dark' ? 0.18 : 0.08));
+                root.style.setProperty('--primary-shadow', color + '3d');
+                root.style.setProperty('--focus-ring', color + '66');
+                var picker = document.getElementById('theme-color-picker');
+                if (picker) picker.value = color;
+                var swatch = document.getElementById('theme-color-swatch');
+                if (swatch) swatch.style.background = color;
+                document.querySelectorAll('.theme-preset').forEach(function(button) {
+                    var active = button.dataset.themeColor.toLowerCase() === color.toLowerCase();
+                    button.classList.toggle('active', active);
+                    button.setAttribute('aria-pressed', String(active));
+                });
+                localStorage.setItem('admin_theme_color', color);
+            }
+
+            function effectiveTheme(mode) {
+                if (mode === 'light' || mode === 'dark') return mode;
+                return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            }
+
+            function applyTheme(mode, reloadCharts) {
+                if (!['system', 'light', 'dark'].includes(mode)) mode = 'system';
+                var resolved = effectiveTheme(mode);
+                document.documentElement.dataset.theme = resolved;
+                document.documentElement.style.colorScheme = resolved;
+                localStorage.setItem('admin_theme_mode', mode);
+                applyAccentColor(localStorage.getItem('admin_theme_color') || '#167c73');
+                var meta = document.getElementById('theme-color-meta');
+                if (meta) meta.content = resolved === 'dark' ? '#10161c' : '#f3f5f7';
+                var button = document.getElementById('theme-mode-toggle');
+                if (button) {
+                    var labels = { system: '跟随系统', light: '浅色主题', dark: '深色主题' };
+                    var icons = { system: 'monitor', light: 'sun', dark: 'moon' };
+                    button.innerHTML = '<i data-lucide="' + icons[mode] + '"></i>';
+                    button.title = labels[mode] + '（点击切换）';
+                    button.setAttribute('aria-label', labels[mode] + '，点击切换');
+                }
+                refreshIcons();
+                if (reloadCharts) {
+                    Object.keys(dashboardCharts).forEach(function(key) { if (dashboardCharts[key]) dashboardCharts[key].dispose(); });
+                    Object.keys(tokenChartInst).forEach(function(key) { if (tokenChartInst[key]) tokenChartInst[key].dispose(); });
+                    dashboardCharts = {};
+                    tokenChartInst = {};
+                    loadDashboardSummary();
+                    if (document.getElementById('page-token').classList.contains('active')) loadTokenCharts();
+                }
+            }
+
+            function initAppearanceControls() {
+                var modes = ['system', 'light', 'dark'];
+                var mode = localStorage.getItem('admin_theme_mode') || 'system';
+                applyTheme(mode, false);
+                document.getElementById('theme-mode-toggle').addEventListener('click', function() {
+                    mode = modes[(modes.indexOf(mode) + 1) % modes.length];
+                    applyTheme(mode, true);
+                });
+                var colorMenu = document.querySelector('.theme-color-menu');
+                var colorToggle = document.getElementById('theme-color-toggle');
+                var colorPopover = document.getElementById('theme-color-popover');
+                colorToggle.addEventListener('click', function() {
+                    var opening = colorPopover.hidden;
+                    colorPopover.hidden = !opening;
+                    colorToggle.setAttribute('aria-expanded', String(opening));
+                });
+                document.querySelectorAll('.theme-preset').forEach(function(button) {
+                    button.addEventListener('click', function() {
+                        applyAccentColor(button.dataset.themeColor);
+                        applyTheme(mode, true);
+                        colorPopover.hidden = true;
+                        colorToggle.setAttribute('aria-expanded', 'false');
+                    });
+                });
+                document.getElementById('theme-color-picker').addEventListener('input', function(event) {
+                    applyAccentColor(event.target.value);
+                });
+                document.getElementById('theme-color-picker').addEventListener('change', function(event) {
+                    applyAccentColor(event.target.value);
+                    applyTheme(mode, true);
+                    colorPopover.hidden = true;
+                    colorToggle.setAttribute('aria-expanded', 'false');
+                });
+                document.addEventListener('click', function(event) {
+                    if (!colorMenu.contains(event.target)) {
+                        colorPopover.hidden = true;
+                        colorToggle.setAttribute('aria-expanded', 'false');
+                    }
+                });
+                document.addEventListener('keydown', function(event) {
+                    if (event.key === 'Escape' && !colorPopover.hidden) {
+                        colorPopover.hidden = true;
+                        colorToggle.setAttribute('aria-expanded', 'false');
+                        colorToggle.focus();
+                    }
+                });
+                var colorSchemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
+                if (colorSchemeMedia.addEventListener) {
+                    colorSchemeMedia.addEventListener('change', function() {
+                        if (mode === 'system') applyTheme(mode, true);
+                    });
+                }
             }
 
             function getMatchType(name) {
@@ -269,8 +429,44 @@ export function getAdminScriptResponse(): Response {
             function initDashboardChart(id) {
                 var node = document.getElementById(id);
                 if (!node || !window.echarts) return null;
-                if (!dashboardCharts[id]) dashboardCharts[id] = window.echarts.init(node);
+                if (!dashboardCharts[id] || dashboardCharts[id].isDisposed()) {
+                    dashboardCharts[id] = window.echarts.getInstanceByDom(node) || window.echarts.init(node);
+                }
+                observeChartNode(node);
+                if (node.clientWidth > 0 && node.clientHeight > 0) dashboardCharts[id].resize();
                 return dashboardCharts[id];
+            }
+
+            function observeChartNode(node) {
+                if (!window.ResizeObserver || !node || node.dataset.chartObserved === 'true') return;
+                if (!chartResizeObserver) {
+                    chartResizeObserver = new ResizeObserver(function(entries) {
+                        entries.forEach(function(entry) {
+                            if (entry.contentRect.width <= 0 || entry.contentRect.height <= 0) return;
+                            var chart = dashboardCharts[entry.target.id] || tokenChartInst[entry.target.id];
+                            if (chart && !chart.isDisposed()) requestAnimationFrame(function() { chart.resize(); });
+                        });
+                    });
+                }
+                node.dataset.chartObserved = 'true';
+                chartResizeObserver.observe(node);
+            }
+
+            function resizeAllCharts() {
+                requestAnimationFrame(function() {
+                    requestAnimationFrame(function() {
+                        Object.keys(dashboardCharts).forEach(function(key) {
+                            var chart = dashboardCharts[key];
+                            var node = document.getElementById(key);
+                            if (chart && node && node.clientWidth > 0 && node.clientHeight > 0 && !chart.isDisposed()) chart.resize();
+                        });
+                        Object.keys(tokenChartInst).forEach(function(key) {
+                            var chart = tokenChartInst[key];
+                            var node = document.getElementById(key);
+                            if (chart && node && node.clientWidth > 0 && node.clientHeight > 0 && !chart.isDisposed()) chart.resize();
+                        });
+                    });
+                });
             }
 
             function chartFallback(id, message) {
@@ -304,7 +500,7 @@ export function getAdminScriptResponse(): Response {
                 setMetric('metric-tokens', fmtUnit(data.total_tokens || 0), '输入与输出');
                 setMetric('metric-cost', '$' + Number(data.total_cost_usd || 0).toFixed(4), '预估 USD');
                 setMetric('metric-success', Number(data.success_rate || 0).toFixed(2) + '%', 'HTTP < 400');
-                setMetric('metric-p95', formatDuration(data.p95_latency_ms || 0), '端到端');
+                setMetric('metric-p95', formatDuration(data.p95_first_byte_ms || 0), '总耗时 ' + formatDuration(data.p95_latency_ms || 0));
                 setMetric('metric-keys', (data.active_keys || 0) + ' / ' + (data.total_keys || 0), '冷却 ' + (data.cooling_keys || 0));
                 setMetric('metric-endpoints', (data.available_endpoints || 0) + ' / ' + (data.total_endpoints || 0), '实时健康');
                 setMetric('metric-errors', Number(data.error_count || 0).toLocaleString(), '最近 24 小时');
@@ -316,16 +512,18 @@ export function getAdminScriptResponse(): Response {
             function renderRequestChart(timeline) {
                 var chart = initDashboardChart('chart-requests');
                 if (!chart) { chartFallback('chart-requests', '图表组件未加载'); return; }
+                var colors = chartColors();
                 chart.setOption({
                     animationDuration: 260,
+                    textStyle: { color: colors.text },
                     grid: { left: 46, right: 18, top: 20, bottom: 28 },
                     tooltip: { trigger: 'axis' },
-                    legend: { right: 14, top: 2, itemWidth: 10, textStyle: { fontSize: 10 } },
-                    xAxis: { type: 'category', data: timeline.map(function(item) { return item.bucket.slice(11); }), axisLabel: { fontSize: 9 }, axisTick: { show: false } },
-                    yAxis: { type: 'value', minInterval: 1, axisLabel: { fontSize: 9 }, splitLine: { lineStyle: { color: '#edf0f2' } } },
+                    legend: { right: 14, top: 2, itemWidth: 10, textStyle: { color: colors.text, fontSize: chartFontSize(10, 11) } },
+                    xAxis: { type: 'category', data: timeline.map(function(item) { return item.bucket.slice(11); }), axisLabel: { color: colors.muted, fontSize: chartFontSize(9, 10) }, axisLine: { lineStyle: { color: colors.grid } }, axisTick: { show: false } },
+                    yAxis: { type: 'value', minInterval: 1, axisLabel: { color: colors.muted, fontSize: chartFontSize(9, 10) }, axisLine: { show: false }, splitLine: { lineStyle: { color: colors.grid } } },
                     series: [
-                        { name: '请求', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2, color: '#167c73' }, areaStyle: { color: 'rgba(22,124,115,.08)' }, data: timeline.map(function(item) { return item.requestCount; }) },
-                        { name: '异常', type: 'bar', barMaxWidth: 10, itemStyle: { color: '#c84a42' }, data: timeline.map(function(item) { return item.errorCount; }) },
+                        { name: '请求', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2, color: colors.primary }, areaStyle: { color: colors.primary + '18' }, data: timeline.map(function(item) { return item.requestCount; }) },
+                        { name: '异常', type: 'bar', barMaxWidth: 10, itemStyle: { color: colors.danger }, data: timeline.map(function(item) { return item.errorCount; }) },
                     ],
                 }, true);
             }
@@ -333,24 +531,28 @@ export function getAdminScriptResponse(): Response {
             function renderTokenCostChart(timeline, totalCost) {
                 var chart = initDashboardChart('chart-token-cost');
                 if (!chart) { chartFallback('chart-token-cost', '图表组件未加载'); return; }
+                var colors = chartColors();
                 chart.setOption({
                     animationDuration: 260,
+                    textStyle: { color: colors.text },
                     grid: { left: 58, right: 20, top: 28, bottom: 28 },
                     tooltip: { trigger: 'axis', formatter: function(points) { return points[0].axisValue + '<br>Token: ' + Number(points[0].value).toLocaleString() + '<br>24h 成本: $' + Number(totalCost).toFixed(4); } },
-                    xAxis: { type: 'category', data: timeline.map(function(item) { return item.date.slice(11, 16); }), axisLabel: { fontSize: 9 }, axisTick: { show: false } },
-                    yAxis: { type: 'value', axisLabel: { fontSize: 9, formatter: fmtUnit }, splitLine: { lineStyle: { color: '#edf0f2' } } },
-                    series: [{ type: 'bar', barMaxWidth: 16, itemStyle: { color: '#447aa8', borderRadius: [2, 2, 0, 0] }, data: timeline.map(function(item) { return item.totalTokens || 0; }) }],
+                    xAxis: { type: 'category', data: timeline.map(function(item) { return item.date.slice(11, 16); }), axisLabel: { color: colors.muted, fontSize: chartFontSize(9, 10) }, axisLine: { lineStyle: { color: colors.grid } }, axisTick: { show: false } },
+                    yAxis: { type: 'value', axisLabel: { color: colors.muted, fontSize: chartFontSize(9, 10), formatter: fmtUnit }, axisLine: { show: false }, splitLine: { lineStyle: { color: colors.grid } } },
+                    series: [{ type: 'bar', barMaxWidth: 16, itemStyle: { color: colors.info, borderRadius: [2, 2, 0, 0] }, data: timeline.map(function(item) { return item.totalTokens || 0; }) }],
                 }, true);
             }
 
             function renderModelShareChart(models) {
                 var chart = initDashboardChart('chart-model-share');
                 if (!chart) { chartFallback('chart-model-share', '图表组件未加载'); return; }
+                var colors = chartColors();
                 chart.setOption({
                     animationDuration: 260,
-                    color: ['#167c73', '#447aa8', '#c27a21', '#6d6a9c', '#6e8797', '#c84a42'],
+                    textStyle: { color: colors.text },
+                    color: [colors.primary, colors.info, colors.warning, '#8b72b6', '#6e8797', colors.danger],
                     tooltip: { trigger: 'item' },
-                    legend: { type: 'scroll', bottom: 2, textStyle: { fontSize: 9 } },
+                    legend: { type: 'scroll', bottom: 2, textStyle: { color: colors.text, fontSize: chartFontSize(9, 10) } },
                     series: [{ type: 'pie', radius: ['42%', '68%'], center: ['50%', '43%'], label: { show: false }, data: models.map(function(item) { return { name: item.model, value: item.requestCount }; }) }],
                 }, true);
             }
@@ -432,14 +634,15 @@ export function getAdminScriptResponse(): Response {
                     var statusClass = row.status >= 500 ? 'error' : row.status >= 400 ? 'warn' : '';
                     var errorClass = row.status >= 400 ? ' is-error' : '';
                     return '<tr class="request-row' + errorClass + '" data-log-id="' + row.id + '">' +
-                        '<td>' + new Date(row.timestamp).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '</td>' +
+                        '<td>' + formatClock(row.timestamp) + '</td>' +
                         '<td><span class="status-code ' + statusClass + '">' + row.status + '</span></td>' +
                         '<td><span class="request-model">' + escapeHtml(row.resolvedModel || row.originalModel) + '</span><span class="request-path">' + escapeHtml(row.path) + '</span></td>' +
-                        '<td>' + formatDuration(row.durationMs || 0) + '</td>' +
+                        '<td><span class="latency-pair"><strong>' + (row.firstByteMs === undefined ? '—' : formatDuration(row.firstByteMs)) + '</strong><small>' + formatDuration(row.durationMs || 0) + '</small></span></td>' +
                         '<td>' + (row.totalTokens === undefined ? '—' : fmtUnit(row.totalTokens)) + '</td></tr>' +
                         '<tr class="request-detail" data-detail-id="' + row.id + '" hidden><td colspan="5">' +
                         '原始模型: ' + escapeHtml(row.originalModel) + '<br>' +
                         '上游: ' + escapeHtml(row.upstreamBaseUrl || '未选择') + '<br>' +
+                        '首字延迟: ' + (row.firstByteMs === undefined ? '未记录' : formatDuration(row.firstByteMs)) + ' · 总耗时: ' + formatDuration(row.durationMs || 0) + '<br>' +
                         '模式: ' + (row.stream ? '流式' : '非流式') + ' · 重试: ' + row.retryCount +
                         (row.error ? '<br>错误: ' + escapeHtml(row.error) : '') + '</td></tr>';
                 }).join('');
@@ -599,14 +802,14 @@ export function getAdminScriptResponse(): Response {
                     var matchType = getMatchType(m.name);
                     var matchBadge = matchType === '精确' ? 'badge-blue' : (matchType === '前缀' ? 'badge-teal' : 'badge-yellow');
                     var refBadge = m.has_refs ? '<span class="badge badge-teal">池 ' + (m.endpoint_ref_count || 0) + '</span>' : '';
-                    return '<div class="model-list-item ' + active + '" data-name="' + escapeHtml(m.name) + '">' +
+                    return '<button type="button" class="model-list-item ' + active + '" data-name="' + escapeHtml(m.name) + '">' +
                         '<span class="ml-name">' + escapeHtml(m.name) + '</span>' +
                         '<span class="ml-badges">' +
                         '<span class="badge ' + matchBadge + '">' + matchType + '</span>' +
                         refBadge +
                         '<span class="badge badge-gray">直 ' + (m.endpoint_count || 0) + '</span>' +
                         '<span class="badge badge-gray">Key ' + (m.key_count || 0) + '</span>' +
-                        '</span></div>';
+                        '</span></button>';
                 }).join('');
 
                 container.querySelectorAll('.model-list-item').forEach(function(item) {
@@ -1133,11 +1336,11 @@ export function getAdminScriptResponse(): Response {
                     var stateText = active === 0 ? '不可用' : (active < total ? '部分可用' : '健康');
                     html += '<tr class="endpoint-main-row" data-detail="endpoint-detail-' + index + '" data-ep-model="' + escapeHtml(ep.model) + '">' +
                         '<td><button class="endpoint-toggle" title="展开 Key 状态" aria-label="展开 Key 状态"><i data-lucide="chevron-right"></i></button></td>' +
-                        '<td><strong>' + escapeHtml(ep.model) + '</strong><div class="table-subtext">' + stateText + '</div></td>' +
-                        '<td class="endpoint-url-cell" title="' + escapeHtml(ep.baseUrl) + '">' + escapeHtml(ep.baseUrl) + '</td>' +
-                        '<td><span class="badge ' + stateClass + '">' + active + ' / ' + total + ' 有效</span></td>' +
-                        '<td><div class="health-inline"><div class="progress-bar"><div class="fill" style="width:' + health + '%;background:' + healthColor + ';"></div></div><strong>' + health + '%</strong></div></td>' +
-                        '<td>' + (ep.weight || 1) + '</td></tr>' +
+                        '<td data-label="模型"><strong>' + escapeHtml(ep.model) + '</strong><div class="table-subtext">' + stateText + '</div></td>' +
+                        '<td data-label="Base URL" class="endpoint-url-cell" title="' + escapeHtml(ep.baseUrl) + '">' + escapeHtml(ep.baseUrl) + '</td>' +
+                        '<td data-label="Key 状态"><span class="badge ' + stateClass + '">' + active + ' / ' + total + ' 有效</span></td>' +
+                        '<td data-label="健康度"><div class="health-inline"><div class="progress-bar"><div class="fill" style="width:' + health + '%;background:' + healthColor + ';"></div></div><strong>' + health + '%</strong></div></td>' +
+                        '<td data-label="权重">' + (ep.weight || 1) + '</td></tr>' +
                         '<tr class="endpoint-detail-row" id="endpoint-detail-' + index + '" hidden><td colspan="6"><div class="endpoint-detail-content">' +
                         '<div class="endpoint-detail-metric"><span>有效 Key</span><strong>' + active + '</strong></div>' +
                         '<div class="endpoint-detail-metric"><span>冷却 Key</span><strong>' + cooldown + '</strong></div>' +
@@ -1219,11 +1422,11 @@ export function getAdminScriptResponse(): Response {
                     var keyStateText = !mounted ? '未挂载 · ' + configured + ' Keys' : active + ' / ' + configured + ' 有效';
                     html += '<tr class="endpoint-main-row pool-main-row" data-detail="pool-detail-' + index + '" data-pool="' + escapeHtml(pool.name) + '">' +
                         '<td><button class="endpoint-toggle" title="展开 Key 管理" aria-label="展开 Key 管理"><i data-lucide="chevron-right"></i></button></td>' +
-                        '<td><span class="pool-name">' + escapeHtml(pool.name) + '</span><div class="table-subtext">权重 ' + (pool.weight || 1) + (pool.timeout ? ' · ' + pool.timeout + 's' : '') + '</div></td>' +
-                        '<td class="endpoint-url-cell" title="' + escapeHtml(pool.base_url) + '">' + escapeHtml(pool.base_url) + '</td>' +
-                        '<td><span class="badge ' + stateClass + '">' + keyStateText + '</span></td>' +
-                        '<td><div class="pool-reference-list">' + (refs.length ? refs.slice(0, 3).map(function(name) { return '<span class="badge badge-gray">' + escapeHtml(name) + '</span>'; }).join('') : '<span class="table-subtext">未被引用</span>') + (refs.length > 3 ? '<span class="badge badge-gray">+' + (refs.length - 3) + '</span>' : '') + '</div></td>' +
-                        '<td><div class="pool-actions"><button class="icon-btn edit-pool-btn" data-pool-index="' + index + '" title="编辑端点池" aria-label="编辑端点池"><i data-lucide="pencil"></i></button><button class="icon-btn delete-pool-btn" data-pool-index="' + index + '" title="删除端点池" aria-label="删除端点池"><i data-lucide="trash-2"></i></button></div></td></tr>' +
+                        '<td data-label="端点池"><span class="pool-name">' + escapeHtml(pool.name) + '</span><div class="table-subtext">权重 ' + (pool.weight || 1) + (pool.timeout ? ' · ' + pool.timeout + 's' : '') + '</div></td>' +
+                        '<td data-label="Base URL" class="endpoint-url-cell" title="' + escapeHtml(pool.base_url) + '">' + escapeHtml(pool.base_url) + '</td>' +
+                        '<td data-label="Key 状态"><span class="badge ' + stateClass + '">' + keyStateText + '</span></td>' +
+                        '<td data-label="引用模型"><div class="pool-reference-list">' + (refs.length ? refs.slice(0, 3).map(function(name) { return '<span class="badge badge-gray">' + escapeHtml(name) + '</span>'; }).join('') : '<span class="table-subtext">未被引用</span>') + (refs.length > 3 ? '<span class="badge badge-gray">+' + (refs.length - 3) + '</span>' : '') + '</div></td>' +
+                        '<td data-label="操作"><div class="pool-actions"><button class="icon-btn edit-pool-btn" data-pool-index="' + index + '" title="编辑端点池" aria-label="编辑端点池"><i data-lucide="pencil"></i></button><button class="icon-btn delete-pool-btn" data-pool-index="' + index + '" title="删除端点池" aria-label="删除端点池"><i data-lucide="trash-2"></i></button></div></td></tr>' +
                         '<tr class="pool-detail-row" id="pool-detail-' + index + '" hidden><td colspan="6"><div class="pool-detail-shell"><div class="pool-key-list" id="pool-key-list-' + index + '"><div class="muted-cell">展开后加载 Key 状态</div></div><div class="pool-key-add"><label>添加 API Key</label><div class="input-group"><input type="password" id="pool-key-new-' + index + '" placeholder="输入新的 Key" autocomplete="off"><button class="btn btn-primary add-pool-key-inline" data-pool-index="' + index + '">添加</button></div><div class="help">Key 保存后仅显示脱敏预览。</div></div></div></td></tr>';
                 });
                 html += '</tbody></table>';
@@ -1364,31 +1567,24 @@ export function getAdminScriptResponse(): Response {
 
             function fmtXLabel(dateStr, type) {
                 if (type === 'd') {
-                    var d = new Date(dateStr + 'T00:00:00Z');
-                    return (d.getMonth() + 1).toString().padStart(2,'0') + '-' + d.getDate().toString().padStart(2,'0');
+                    return dateStr.slice(5, 10);
                 }
-                var d = new Date(dateStr + 'Z');
-                return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+                return dateStr.slice(11, 16);
             }
-
-            var tokenResizeRegistered = false;
 
             function ensureCharts() {
                 ['chart-bar', 'chart-line', 'chart-pie'].forEach(function(id) {
                     var dom = document.getElementById(id);
                     if (dom) {
                         try {
-                            if (tokenChartInst[id]) tokenChartInst[id].dispose();
-                            tokenChartInst[id] = echarts.init(dom);
+                            if (!tokenChartInst[id] || tokenChartInst[id].isDisposed()) {
+                                tokenChartInst[id] = echarts.getInstanceByDom(dom) || echarts.init(dom);
+                            }
+                            observeChartNode(dom);
+                            if (dom.clientWidth > 0 && dom.clientHeight > 0) tokenChartInst[id].resize();
                         } catch (e) { console.warn('[TokenStats] echarts init failed:', id, e); }
                     }
                 });
-                if (!tokenResizeRegistered) {
-                    window.addEventListener('resize', function() {
-                        Object.values(tokenChartInst).forEach(function(c) { if (c) c.resize(); });
-                    });
-                    tokenResizeRegistered = true;
-                }
             }
 
             async function loadTokenCharts() {
@@ -1440,20 +1636,20 @@ export function getAdminScriptResponse(): Response {
                 var unpricedModels = models.filter(function(m) { return !m.has_pricing && m.total_tokens > 0; });
                 var html = '';
                 if (pricedModels.length > 0) {
-                    html += '<table><thead><tr>' +
+                    html += '<table class="pricing-data-table"><thead><tr>' +
                         '<th>模型</th><th>输入 $/1M</th><th>输出 $/1M</th><th>缓存读 $/1M</th><th>消耗 Token</th><th>输入成本</th><th>输出成本</th><th style="text-align:right;">总成本</th></tr></thead><tbody>';
                     pricedModels.forEach(function(m) {
                         var p = m.pricing;
                         var isDeepSeek = m.model.toLowerCase().includes('deepseek');
-                        html += '<tr' + (isDeepSeek ? ' style="background:#f0fdfa;"' : '') + '>' +
-                            '<td><strong>' + escapeHtml(m.model) + '</strong>' + (isDeepSeek ? ' <span class="badge badge-teal">DeepSeek</span>' : '') + '</td>' +
-                            '<td>$' + (p.input).toFixed(4) + '</td>' +
-                            '<td>$' + (p.output).toFixed(4) + '</td>' +
-                            '<td>' + (p.cache_read ? '$' + p.cache_read.toFixed(4) : '-') + '</td>' +
-                            '<td>' + (m.total_tokens || 0).toLocaleString() + '</td>' +
-                            '<td>' + (m.input_cost_usd !== null ? '$' + m.input_cost_usd.toFixed(6) : '-') + '</td>' +
-                            '<td>' + (m.output_cost_usd !== null ? '$' + m.output_cost_usd.toFixed(6) : '-') + '</td>' +
-                            '<td style="text-align:right;"><strong>' + (m.cost_usd !== null ? '$' + m.cost_usd.toFixed(6) : '-') + '</strong></td></tr>';
+                        html += '<tr' + (isDeepSeek ? ' class="pricing-deepseek-row"' : '') + '>' +
+                            '<td data-label="模型"><strong>' + escapeHtml(m.model) + '</strong>' + (isDeepSeek ? ' <span class="badge badge-teal">DeepSeek</span>' : '') + '</td>' +
+                            '<td data-label="输入 $/1M">$' + (p.input).toFixed(4) + '</td>' +
+                            '<td data-label="输出 $/1M">$' + (p.output).toFixed(4) + '</td>' +
+                            '<td data-label="缓存读 $/1M">' + (p.cache_read ? '$' + p.cache_read.toFixed(4) : '-') + '</td>' +
+                            '<td data-label="消耗 Token">' + (m.total_tokens || 0).toLocaleString() + '</td>' +
+                            '<td data-label="输入成本">' + (m.input_cost_usd !== null ? '$' + m.input_cost_usd.toFixed(6) : '-') + '</td>' +
+                            '<td data-label="输出成本">' + (m.output_cost_usd !== null ? '$' + m.output_cost_usd.toFixed(6) : '-') + '</td>' +
+                            '<td data-label="总成本" style="text-align:right;"><strong>' + (m.cost_usd !== null ? '$' + m.cost_usd.toFixed(6) : '-') + '</strong></td></tr>';
                     });
                     html += '</tbody></table>';
                 }
@@ -1467,28 +1663,32 @@ export function getAdminScriptResponse(): Response {
             function updateBarChart(data, typ) {
                 var c = tokenChartInst['chart-bar'];
                 if (!c) return;
+                var colors = chartColors();
                 var dates = data.map(function(d) { return fmtXLabel(d.date, typ); });
                 var vals = data.map(function(d) { return d.totalTokens; });
                 c.setOption({
+                    textStyle: { color: colors.text },
                     tooltip: { trigger: 'axis', formatter: function(p) { return p[0].axisValue + '<br/>Token: ' + p[0].data.toLocaleString(); } },
                     grid: { left: '10%', right: '4%', top: 10, bottom: 30 },
-                    xAxis: { type: 'category', data: dates, axisLabel: { rotate: 0, fontSize: 10, interval: data.length > 24 ? Math.floor(data.length / 8) : 0 } },
-                    yAxis: { type: 'value', axisLabel: { formatter: fmtUnit } },
-                    series: [{ type: 'bar', data: vals, barMaxWidth: 40, itemStyle: { borderRadius: [4,4,0,0], color: new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:'#0d9488'},{offset:1,color:'#5eead4'}]) } }]
+                    xAxis: { type: 'category', data: dates, axisLabel: { color: colors.muted, rotate: 0, fontSize: chartFontSize(10, 11), interval: data.length > 24 ? Math.floor(data.length / 8) : 0 }, axisLine: { lineStyle: { color: colors.grid } }, axisTick: { show: false } },
+                    yAxis: { type: 'value', axisLabel: { color: colors.muted, formatter: fmtUnit }, axisLine: { show: false }, splitLine: { lineStyle: { color: colors.grid } } },
+                    series: [{ type: 'bar', data: vals, barMaxWidth: 40, itemStyle: { borderRadius: [4,4,0,0], color: new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:colors.primary},{offset:1,color:mixHex(colors.primary, colors.surface, .58)}]) } }]
                 });
             }
 
             function updateLineChart(data, typ) {
                 var c = tokenChartInst['chart-line'];
                 if (!c) return;
+                var colors = chartColors();
                 var dates = data.map(function(d) { return fmtXLabel(d.date, typ); });
                 var vals = data.map(function(d) { return d.requestCount; });
                 c.setOption({
+                    textStyle: { color: colors.text },
                     tooltip: { trigger: 'axis', formatter: function(p) { return p[0].axisValue + '<br/>请求: ' + p[0].data.toLocaleString(); } },
                     grid: { left: '10%', right: '4%', top: 10, bottom: 30 },
-                    xAxis: { type: 'category', data: dates, axisLabel: { rotate: 0, fontSize: 10, interval: data.length > 24 ? Math.floor(data.length / 8) : 0 } },
-                    yAxis: { type: 'value', axisLabel: { formatter: fmtUnit } },
-                    series: [{ type: 'line', data: vals, smooth: true, symbol: 'circle', symbolSize: 5, lineStyle: { color: '#6366f1', width: 2 }, itemStyle: { color: '#6366f1' }, areaStyle: { color: new echarts.graphic.LinearGradient(0,0,0,1,[{offset:0,color:'rgba(99,102,241,0.2)'},{offset:1,color:'rgba(99,102,241,0)'}]) } }]
+                    xAxis: { type: 'category', data: dates, axisLabel: { color: colors.muted, rotate: 0, fontSize: chartFontSize(10, 11), interval: data.length > 24 ? Math.floor(data.length / 8) : 0 }, axisLine: { lineStyle: { color: colors.grid } }, axisTick: { show: false } },
+                    yAxis: { type: 'value', axisLabel: { color: colors.muted, formatter: fmtUnit }, axisLine: { show: false }, splitLine: { lineStyle: { color: colors.grid } } },
+                    series: [{ type: 'line', data: vals, smooth: true, symbol: 'circle', symbolSize: 5, lineStyle: { color: colors.info, width: 2 }, itemStyle: { color: colors.info }, areaStyle: { color: colors.info + '24' } }]
                 });
             }
 
@@ -1496,15 +1696,17 @@ export function getAdminScriptResponse(): Response {
                 var c = tokenChartInst['chart-pie'];
                 if (!c) return;
                 if (!data || data.length === 0) { c.setOption({}); return; }
+                var colors = chartColors();
                 c.setOption({
+                    textStyle: { color: colors.text },
                     tooltip: { formatter: function(p) { return p.name + ': ' + p.value.toLocaleString() + ' (' + p.percent + '%)'; } },
                     series: [{
                         type: 'pie', radius: ['55%', '78%'], center: ['50%', '50%'],
                         avoidLabelOverlap: true, itemStyle: { borderRadius: 3 },
-                        label: { formatter: '{b}\\n{d}%', fontSize: 11 },
+                        label: { color: colors.text, formatter: function(p) { var name = p.name.length > 22 ? p.name.slice(0, 20) + '…' : p.name; return name + '\n' + p.percent + '%'; }, fontSize: chartFontSize(11, 12) },
                         emphasis: { label: { fontSize: 16, fontWeight: 'bold' } },
                         data: data.map(function(d) { return { name: d.model, value: d.totalTokens }; }),
-                        color: ['#0d9488','#6366f1','#f59e0b','#ef4444','#3b82f6','#8b5cf6','#10b981','#ec4899'],
+                        color: [colors.primary, colors.info, colors.warning, colors.danger, '#6e9fd0', '#8b72b6', '#43a77a', '#c66b9b'],
                     }]
                 });
             }
@@ -1671,6 +1873,7 @@ export function getAdminScriptResponse(): Response {
             document.getElementById('request-log-path').addEventListener('change', resetRequestLogs);
             document.getElementById('mobile-nav-toggle').addEventListener('click', function() {
                 document.getElementById('sidebar').classList.toggle('open');
+                setTimeout(resizeAllCharts, 220);
             });
 
             // Token 统计事件
@@ -1721,11 +1924,12 @@ export function getAdminScriptResponse(): Response {
             });
 
             window.addEventListener('resize', function() {
-                Object.keys(dashboardCharts).forEach(function(key) { dashboardCharts[key].resize(); });
-                Object.keys(tokenChartInst).forEach(function(key) { tokenChartInst[key].resize(); });
+                resizeAllCharts();
+                if (codeMirrorEditor) codeMirrorEditor.refresh();
             });
 
             // Start
+            initAppearanceControls();
             checkAuthAndInit();
         })();`;
     return new Response(script, {
