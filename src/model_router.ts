@@ -237,11 +237,20 @@ export class ModelRouter {
     isAuthenticated(req: Request): boolean {
         if (this.authKeys.length === 0) return true;
 
-        const authHeader = req.headers.get("Authorization");
-        if (!authHeader?.startsWith("Bearer ")) return false;
+        // 支持 Authorization: Bearer <token> 或 Authorization: <token>
+        const authHeader = req.headers.get("authorization") || req.headers.get("Authorization");
+        if (authHeader) {
+            const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : authHeader.trim();
+            if (this.authKeys.includes(token)) return true;
+        }
 
-        const token = authHeader.slice(7);
-        return this.authKeys.includes(token);
+        // 支持 Anthropic 标准的 x-api-key / api-key
+        const apiKeyHeader = req.headers.get("x-api-key") || req.headers.get("api-key");
+        if (apiKeyHeader && this.authKeys.includes(apiKeyHeader.trim())) {
+            return true;
+        }
+
+        return false;
     }
 
     // ------------------------------------------------------------------------
@@ -419,8 +428,8 @@ export class ModelRouter {
             });
         }
 
-        let endpoint = await balancer.getAvailableEndpoint();
-        while (endpoint) {
+        const availableEndpoints = await balancer.getAvailableEndpointsOrdered();
+        for (const endpoint of availableEndpoints) {
             const baseUrl = baseUrlMap.get(endpoint);
             if (baseUrl && baseUrl !== "") {
                 if (context) context.upstreamBaseUrl = baseUrl;
@@ -435,14 +444,25 @@ export class ModelRouter {
                     context,
                 );
                 if (response !== null) {
+                    // 如果上游返回 200，或者 4xx (除 401/403/429 外且成功)，正常返回
+                    // 若上游返回 404 (model_not_found) 或 400 (unknown provider)，说明该上游不支持此模型，继续尝试下一个上游 (Failover)
+                    if (response.status >= 400 && response.status < 500) {
+                        try {
+                            const cloned = response.clone();
+                            const errBody = await cloned.text();
+                            if (errBody.includes("model_not_found") || errBody.includes("unknown provider") || errBody.includes("not found")) {
+                                this.logger.warn(`Endpoint ${baseUrl} does not support model ${originalModel}, falling back to next endpoint`);
+                                continue;
+                            }
+                        } catch (_) {}
+                    }
                     return response;
                 }
-                this.logger.debug(`Endpoint ${baseUrl} all keys unavailable, trying next`);
+                this.logger.debug(`Endpoint ${baseUrl} all keys unavailable, trying next fallback`);
             } else {
                 this.logger.info(`Model ${originalModel} is redirect-only, triggering redirect`);
                 break;
             }
-            endpoint = await balancer.getAvailableEndpoint();
         }
 
         if (config.redirects && config.redirects.length > 0) {
@@ -504,6 +524,8 @@ export class ModelRouter {
         const headers = new Headers(req.headers);
         headers.delete("host");
         headers.delete("authorization");
+        headers.delete("x-api-key");
+        headers.delete("api-key");
         headers.set("content-type", "application/json");
         // 应用配置的 header 策略（模型级优先于全局）
         const headerPolicy = config.headers ?? this.globalHeaderPolicy;
@@ -549,12 +571,12 @@ export class ModelRouter {
                     clearTimeout(timeoutId);
                 }
 
-                // 401 = 凭据确实无效 → 永久删除 key
-                // 403 = 服务器拒绝（WAF/IP/UA/流式差异等，非凭据问题）→ 临时冷却
+                // 401/403 异常处理：标记临时失败并进入冷却，绝不物理删除配置文件中的 Key
                 if (response.status === 401) {
-                    await this.removeKeyFromConfig(config.name, baseUrl, key);
-                    await endpoint.markPermanentFailure(key, 401);
-                    this.logger.warn(`Key ${key.slice(0, 8)}... auth failure 401, permanently deleted`);
+                    await endpoint.markFailure(key);
+                    attempts++;
+                    this.logger.warn(`Key ${key.slice(0, 8)}... upstream returned 401, entering cooldown (${endpoint.getKeyCount()} keys remaining)`);
+                    lastError = new Error(`Upstream error: 401`);
                     continue;
                 }
                 if (response.status === 403) {
@@ -780,16 +802,20 @@ export class ModelRouter {
     }
 
     private setAuthHeader(headers: Headers, key: string, baseUrl: string): void {
+        headers.delete("authorization");
+        headers.delete("x-api-key");
+        headers.delete("api-key");
+
         if (baseUrl.includes("openai") || baseUrl.includes("azure")) {
             headers.set("Authorization", `Bearer ${key}`);
         } else if (baseUrl.includes("anthropic")) {
-            headers.delete("authorization");
             headers.set("x-api-key", key);
             headers.set("anthropic-version", "2023-06-01");
         } else if (baseUrl.includes("googleapis") || baseUrl.includes("generativelanguage")) {
             // Gemini 通常使用查询参数
         } else {
             headers.set("Authorization", `Bearer ${key}`);
+            headers.set("x-api-key", key);
         }
     }
 

@@ -7,17 +7,17 @@ export function getAdminPageResponse(): Response {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#f3f5f7" id="theme-color-meta">
+    <meta name="theme-color" content="#090c12" id="theme-color-meta">
     <title>API Router 管理面板</title>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com">
     <link rel="preconnect" href="https://unpkg.com">
     <script>
         (function() {
-            var mode = localStorage.getItem('admin_theme_mode') || 'system';
+            var mode = localStorage.getItem('admin_theme_mode') || 'dark';
             var dark = mode === 'dark' || (mode === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
             document.documentElement.dataset.theme = dark ? 'dark' : 'light';
             document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
-            var accent = localStorage.getItem('admin_theme_color');
+            var accent = localStorage.getItem('admin_theme_color') || '#00aeb9';
             if (/^#[0-9a-f]{6}$/i.test(accent || '')) document.documentElement.style.setProperty('--primary', accent);
         })();
     </script>
@@ -31,50 +31,55 @@ export function getAdminPageResponse(): Response {
 <body>
     <a class="skip-link" href="#main-content">跳到主要内容</a>
 
-    <!-- ====== 侧边栏 ====== -->
-    <aside class="sidebar" id="sidebar">
-        <div class="sidebar-logo">
-            <span class="brand-mark">AR</span>
-            <span class="brand-copy"><strong>API Router</strong><small>Operations console</small></span>
-        </div>
-        <nav class="sidebar-nav" id="sidebar-nav">
-            <button class="active" data-page="dashboard"><i data-lucide="layout-dashboard"></i><span>仪表盘</span></button>
-            <button data-page="models"><i data-lucide="box"></i><span>模型</span></button>
-            <button data-page="endpoints"><i data-lucide="waypoints"></i><span>端点</span></button>
-            <button data-page="token"><i data-lucide="chart-no-axes-combined"></i><span>Token 与成本</span></button>
-            <button data-page="config"><i data-lucide="file-cog"></i><span>配置</span></button>
-        </nav>
-        <div class="sidebar-footer">
-            <span class="status-dot"></span><span>路由服务在线</span>
-        </div>
-    </aside>
+    <!-- ====== llm-proxy 风格科技顶栏 Masthead ====== -->
+    <header class="masthead">
+        <div class="masthead-inner">
+            <div class="brand">
+                <span class="brand-logo-badge">AR</span>
+                <span class="brand-title">API Router</span>
+                <span class="brand-tag">v1 控制台</span>
+            </div>
 
-    <!-- ====== 主内容 ====== -->
-    <main class="main" id="main-content">
-        <header class="main-header">
-            <button class="icon-btn mobile-nav-toggle" id="mobile-nav-toggle" title="打开导航" aria-label="打开导航"><i data-lucide="menu"></i></button>
-            <h1 id="page-title">仪表盘</h1>
-            <div class="header-right">
-                <span id="header-info"></span>
-                <div class="appearance-controls" aria-label="外观设置">
+            <!-- 水平主导航标签栏 (彻底消灭侧栏黑柜子) -->
+            <nav class="nav-tabs" id="sidebar-nav">
+                <button class="tab-btn active" data-page="dashboard"><i data-lucide="layout-dashboard"></i><span>仪表盘</span></button>
+                <button class="tab-btn" data-page="models"><i data-lucide="box"></i><span>模型矩阵</span></button>
+                <button class="tab-btn" data-page="endpoints"><i data-lucide="waypoints"></i><span>路由端点</span></button>
+                <button class="tab-btn" data-page="token"><i data-lucide="chart-no-axes-combined"></i><span>Token与成本</span></button>
+                <button class="tab-btn" data-page="config"><i data-lucide="file-cog"></i><span>网关配置</span></button>
+            </nav>
+
+            <div class="masthead-right">
+                <div class="live-readouts">
+                    <div class="readout-pill">
+                        <span class="dot-status dot-online"></span>
+                        <span class="readout-text">HEALTHY</span>
+                    </div>
+                </div>
+                <div class="appearance-controls" aria-label="控制操作">
                     <button class="icon-btn" id="theme-mode-toggle" title="切换明暗主题" aria-label="切换明暗主题"><i data-lucide="monitor"></i></button>
                     <div class="theme-color-menu">
                         <button class="icon-btn theme-color-toggle" id="theme-color-toggle" title="设置主题色" aria-label="设置主题色" aria-expanded="false" aria-controls="theme-color-popover"><span class="theme-color-swatch" id="theme-color-swatch"></span></button>
                         <div class="theme-color-popover" id="theme-color-popover" hidden>
-                            <div class="theme-popover-heading"><strong>主题色</strong><span>选择界面强调色</span></div>
+                            <div class="theme-popover-heading"><strong>主题强调色</strong><span>选择终端高光色</span></div>
                             <div class="theme-presets" aria-label="主题色预设">
-                                <button type="button" class="theme-preset" data-theme-color="#167c73" style="--swatch:#167c73" aria-label="青绿色" aria-pressed="false"></button>
-                                <button type="button" class="theme-preset" data-theme-color="#2563eb" style="--swatch:#2563eb" aria-label="蓝色" aria-pressed="false"></button>
-                                <button type="button" class="theme-preset" data-theme-color="#7c3aed" style="--swatch:#7c3aed" aria-label="紫色" aria-pressed="false"></button>
-                                <button type="button" class="theme-preset" data-theme-color="#db2777" style="--swatch:#db2777" aria-label="玫红色" aria-pressed="false"></button>
-                                <button type="button" class="theme-preset" data-theme-color="#d97706" style="--swatch:#d97706" aria-label="琥珀色" aria-pressed="false"></button>
+                                <button type="button" class="theme-preset" data-theme-color="#00aeb9" style="--swatch:#00aeb9" aria-label="极光青" aria-pressed="false"></button>
+                                <button type="button" class="theme-preset" data-theme-color="#0284c7" style="--swatch:#0284c7" aria-label="钛金蓝" aria-pressed="false"></button>
+                                <button type="button" class="theme-preset" data-theme-color="#7c3aed" style="--swatch:#7c3aed" aria-label="暮霭紫" aria-pressed="false"></button>
+                                <button type="button" class="theme-preset" data-theme-color="#059669" style="--swatch:#059669" aria-label="翡翠绿" aria-pressed="false"></button>
+                                <button type="button" class="theme-preset" data-theme-color="#d97706" style="--swatch:#d97706" aria-label="暗曜琥珀" aria-pressed="false"></button>
+                                <button type="button" class="theme-preset" data-theme-color="#e11d48" style="--swatch:#e11d48" aria-label="落樱嫩粉" aria-pressed="false"></button>
                             </div>
-                            <label class="theme-custom-color"><span>自定义颜色</span><input id="theme-color-picker" name="theme-color" type="color" value="#167c73" aria-label="自定义主题色"></label>
+                            <label class="theme-custom-color"><span>自定义颜色</span><input id="theme-color-picker" name="theme-color" type="color" value="#00d2b4" aria-label="自定义主题色"></label>
                         </div>
                     </div>
                 </div>
             </div>
-        </header>
+        </div>
+    </header>
+
+    <!-- ====== 全宽主内容区 ====== -->
+    <main class="main" id="main-content">
         <div class="main-body">
 
             <!-- 鉴权遮罩 -->
@@ -247,7 +252,7 @@ export function getAdminPageResponse(): Response {
                             </div>
                         </div>
                     </header>
-                    <div class="token-overview" id="token-overview"><div id="token-summary-cards"></div></div>
+                    <div class="token-overview" id="token-overview"><div class="token-summary-cards" id="token-summary-cards"></div></div>
                     <div class="token-analysis-grid">
                         <section class="workspace-panel token-trend-panel" id="token-trend-panel">
                             <div class="panel-heading"><div><span class="panel-kicker">TOKEN VOLUME</span><h3>Token 消耗趋势</h3></div><span class="panel-note" id="token-range-label">最近 1 小时</span></div>
